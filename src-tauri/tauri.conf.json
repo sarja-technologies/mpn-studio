@@ -1,0 +1,65 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MPN Studio",
+  "version": "0.1.0",
+  "identifier": "me.fylume.mpnstudio",
+  "build": {
+    "frontendDist": "../web/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb",
+      "appimage"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "MPN Studio: visual workbench for Modular Persistent Networks",
+    "longDescription": "MPN Studio is the Fylume workbench for Yaob modular persistent networks (MPN). Edit nodes, cells and relations on a visual whiteboard, keep projects on your computer, and work fully offline. Optional remote compute can be connected separately.",
+    "copyright": "Fylume",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "resources": {
+      "../build/backend/": "backend/",
+      "../LICENSE": "licenses/LICENSE",
+      "../NOTICE": "licenses/NOTICE",
+      "../THIRD-PARTY.md": "licenses/THIRD-PARTY.md",
+      "../docs/THIRD-PARTY-RUST.md": "licenses/THIRD-PARTY-RUST.md"
+    },
+    "linux": {
+      "deb": {
+        "section": "science",
+        "priority": "optional",
+        "desktopTemplate": "../packaging/linux/mpn-studio.desktop",
+        "files": {
+          "/usr/share/mime/packages/mpn-studio.xml": "../packaging/linux/mpn-studio-mime.xml"
+        }
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "mpnbak"
+        ],
+        "name": "MPN Studio backup",
+        "description": "MPN Studio project backup",
+        "mimeType": "application/x-mpn-studio-backup",
+        "role": "Editor"
+      }
+    ],
+    "licenseFile": "../LICENSE"
+  }
+}

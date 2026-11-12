@@ -1,0 +1,25 @@
+MPN Studio
+Copyright 2026 Fylume
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed by third parties under their own
+licences. They are listed in THIRD-PARTY.md and docs/THIRD-PARTY-RUST.md. Keep
+those files and this NOTICE when you redistribute MPN Studio, modified or not.
+
+Names, logos and brand artwork
+------------------------------
+"Fylume", "Yaob" and "MPN Studio", the Fylume and Yaob logos and wordmarks, and
+the brand artwork in web/public/brand/ are not licensed under the Apache
+License. Section 6 of that licence grants no permission to use them. You may
+reproduce them unchanged as part of this software. If you distribute a modified
+version, give it your own name and logo and say that it is modified.
+
+Node data
+---------
+Yaob N10K node data (the network that MPN Studio edits, and the screenshots in
+docs/desktop/acceptance/ that show it) is a different work. It is licensed
+under CC BY-SA 4.0, and parts of it are derived from English Wikipedia and
+Wikidata. It is not part of this repository and not covered by the Apache
+License. See https://github.com/sarja-technologies/yaob for the data and its
+licence.

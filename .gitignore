@@ -1,0 +1,39 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+web/dist/
+data/
+runs/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.safetensors
+*.pt
+*.npy
+.pytest_cache/
+.env
+*.key
+*.token
+
+# design-audit screenshots
+.antislop/
+# release staging
+release/
+*.egg-info/
+
+# desktop build outputs
+src-tauri/target/
+src-tauri/binaries/
+build/
+dist-desktop/
+.venv-build/
+*.AppImage
+*.deb
+
+# test and generated output
+web/e2e/screenshots/
+web/test-results/
+web/playwright-report/
+src-tauri/gen/

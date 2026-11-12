@@ -1,0 +1,39 @@
+PASS  internet unreachable from the sandbox
+PASS  window opened
+PASS  migrated network opened (rev 8, project yaob-n10k)
+PASS  inspector shows the Knowledge cell of a real node
+PASS  edit created revision 9
+PASS  marker readable through the API before closing
+PASS  app exited on Quit
+PASS  marker is in the project file after shutdown
+PASS  project head revision on disk is 9
+PASS  no backend process left behind
+PASS  reopened directly into the last project at rev 9
+PASS  the edit persisted across restart
+PASS  new project created and open
+PASS  node created in the new network
+SKIP  native folder dialog confirmed the export folder (dialog did not respond; exported through the API instead)
+PASS  bundle exported to the chosen folder
+PASS  app exited on Quit
+PASS  bundle imported into workspace B
+PASS  app exited on Quit
+PASS  workspace B reopens straight into the imported network
+PASS  imported network contains the node
+PASS  app exited on Quit
+PASS  backup file written (.mpnbak)
+PASS  app exited on Quit
+PASS  the system maps .mpnbak to the app's file type
+PASS  the desktop entry passes files to the app (Exec ... %F, MimeType)
+PASS  launching with a .mpnbak opened it as a new project, restored from the backup
+PASS  the restored project holds the node
+PASS  a second launch handed its file to the running window (still one backend)
+PASS  app exited on Quit
+PASS  no non-loopback connection attempted (connect-a1.strace)
+PASS  no non-loopback connection attempted (connect-a2.strace)
+PASS  no non-loopback connection attempted (connect-b1.strace)
+PASS  no non-loopback connection attempted (connect-b2.strace)
+PASS  no non-loopback connection attempted (connect-b3.strace)
+PASS  no non-loopback connection attempted (connect-c1.strace)
+PASS  shipped UI references no hosts beyond the inert allowlist (no CDN fonts, scripts or APIs)
+PASS  shipped UI loads no external <script>, <link> or @import
+SUMMARY: 37 passed, 0 failed, 1 skipped
