@@ -43,7 +43,7 @@ class Task:
     def view(self) -> dict:
         return {"id": self.id, "kind": self.kind, "title": self.title, "state": self.state, "progress": self.progress,
                 "log": self.log[-40:], "result": self.result, "error": self.error, "started": self.started, "finished": self.finished,
-                "cancellable": self.kind in ("bulk-delete", "build", "bench")}
+                "cancellable": self.kind in ("bulk-delete", "build", "bench", "network-install")}
 
 
 TASKS: dict[str, Task] = {}
@@ -518,6 +518,91 @@ def register(app: FastAPI, get_store: Callable, open_project: Callable[[str], No
         if not t or not t.result:
             raise HTTPException(404, "No finished test run with that id.")
         return PlainTextResponse(_bench_csv(t.result), media_type="text/csv")
+
+    # -------------------------------------------------------------------------------- MPN network (read-only explorer)
+    from ..desktop import settings as dsettings
+    from ..mpnnet.service import NetError, Service
+    net = Service()
+
+    @app.exception_handler(NetError)
+    async def _net_error(_: Request, e: NetError):
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
+    def _recent(mode: str, target: str, name: str):
+        s = dsettings.load()
+        rec = [r for r in s["networks"]["recent"] if not (r.get("mode") == mode and r.get("target") == target)]
+        rec.insert(0, {"mode": mode, "target": target, "name": name, "opened": time.time()})
+        dsettings.update({"networks": {"recent": rec[:8]}})
+
+    @app.get("/api/library/network")
+    def network_state():
+        return {**net.state(), "recent": dsettings.load()["networks"]["recent"]}
+
+    @app.post("/api/library/network/open")
+    def network_open(body: dict):
+        mode, target = body.get("mode"), (body.get("target") or "").strip()
+        if not target:
+            raise HTTPException(400, "Give an address or choose a folder.")
+        if mode == "local":
+            _abs(target, "folder")
+        st = net.open(mode, target)
+        _recent(mode, st["target"], st["name"])
+        return {**st, "recent": dsettings.load()["networks"]["recent"]}
+
+    @app.post("/api/library/network/close")
+    def network_close():
+        net.close()
+        return net.state()
+
+    @app.post("/api/library/network/forget")
+    def network_forget(body: dict):
+        s = dsettings.load()
+        rec = [r for r in s["networks"]["recent"] if not (r.get("mode") == body.get("mode") and r.get("target") == body.get("target"))]
+        dsettings.update({"networks": {"recent": rec}})
+        return {"recent": rec}
+
+    @app.get("/api/library/network/v1/{op}")
+    def network_query(op: str, request: Request):
+        if op not in ("overview", "search", "browse"):
+            raise HTTPException(404, "Unknown query.")
+        return net.call(op, None, dict(request.query_params))
+
+    @app.get("/api/library/network/v1/node/{nid}")
+    def network_node(nid: str):
+        return net.call("node", nid)
+
+    @app.get("/api/library/network/v1/node/{nid}/{what}")
+    def network_node_more(nid: str, what: str, request: Request):
+        if what not in ("relationships", "graph"):
+            raise HTTPException(404, "Unknown query.")
+        return net.call(what, nid, dict(request.query_params))
+
+    @app.post("/api/library/network/install")
+    def network_install(body: dict):
+        """Install a downloaded (compressed) pack into a folder so it opens offline. Never writes into the source folder."""
+        src, dst = Path(_abs(body.get("source"), "downloaded pack folder")), Path(_abs(body.get("dest"), "destination folder"))
+        if not (src / "manifest.json").exists():
+            raise HTTPException(400, "The downloaded pack folder needs manifest.json.")
+        if dst.resolve() == src.resolve() or src.resolve() in dst.resolve().parents:
+            raise HTTPException(400, "Install into a different folder from the download, not inside it.")
+        from ..mpnnet import install as inst
+
+        def run(t: Task):
+            m = json.loads((src / "manifest.json").read_text())
+            total = len(m["shards"])
+            done = [0]
+
+            def progress(msg):
+                done[0] += 1
+                t.log.append(msg)
+                t.progress = {"label": msg, "done": done[0], "total": total}
+                if t.cancel.is_set():
+                    raise netops.Cancelled()
+            try:
+                return inst.install(src, dst, overlay=False, progress=progress)
+            except SystemExit as e:
+                raise RuntimeError(str(e))
+        return start_task("network-install", f"Install {src.name}", run).view()
 
 
 def _tree_memory(pid: int) -> dict:

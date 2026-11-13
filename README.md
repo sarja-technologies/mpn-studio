@@ -33,17 +33,17 @@ Get the files from the [Releases page](https://github.com/sarja-technologies/mpn
 
 | File | For |
 |---|---|
-| `mpn-studio_0.2.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
-| `MPN-Studio_0.2.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
-| `mpn-studio_0.2.0_arm64.deb` | Ubuntu on ARM64, including the NVIDIA DGX Spark |
-| `MPN-Studio_0.2.0_aarch64.AppImage` | Other ARM64 Linux with GTK 3 and WebKitGTK 4.1 |
+| `mpn-studio_0.3.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
+| `MPN-Studio_0.3.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
+| `mpn-studio_0.3.0_arm64.deb` | Ubuntu on ARM64, including the NVIDIA DGX Spark |
+| `MPN-Studio_0.3.0_aarch64.AppImage` | Other ARM64 Linux with GTK 3 and WebKitGTK 4.1 |
 | `SHA256SUMS-x86_64`, `SHA256SUMS-aarch64` | Checksums |
 
 ```sh
 sha256sum -c SHA256SUMS-x86_64 --ignore-missing
-sudo apt install ./mpn-studio_0.2.0_amd64.deb       # menu entry "MPN Studio"; commands mpn-studio and mpn
+sudo apt install ./mpn-studio_0.3.0_amd64.deb       # menu entry "MPN Studio"; commands mpn-studio and mpn
 # or
-chmod +x MPN-Studio_0.2.0_x86_64.AppImage && ./MPN-Studio_0.2.0_x86_64.AppImage
+chmod +x MPN-Studio_0.3.0_x86_64.AppImage && ./MPN-Studio_0.3.0_x86_64.AppImage
 ```
 
 The packages include llama.cpp builds for CPU, CUDA (NVIDIA) and, on x86-64, Vulkan, and use the first that finds a
@@ -81,6 +81,26 @@ mpn info Model.mpn ; mpn verify Model.mpn
 A `.mpn` file is not a GGUF file and llama.cpp alone cannot run it: the MPN runtime in MPN Studio reads it, gives the
 core to llama.cpp, and does the retrieval over the network itself. See [docs/MPN-FORMAT.md](docs/MPN-FORMAT.md).
 
+## Open an MPN network
+
+The **MPN Network** tab (or File → Open MPN Network…) opens a whole MPN network read only, however large: nothing is
+copied into a project, and every list is read a page at a time.
+
+- **On the local network**: the address of the MPN dashboard on the computer that holds the network, for example
+  `http://mpn-host.local:8844`. MPN Studio's own backend makes the requests, so the window still talks only to this
+  computer.
+- **On this computer**: **Install downloaded pack…** decompresses a downloaded MPN pack (format `mpn-pack/1`: zstd
+  shards with SHA-256 checksums) into a folder you choose, checking every partition. **Open pack folder…** then opens it
+  with no network at all.
+
+Search titles and aliases (paged), look up a node id or a Wikidata id such as `Q42`, browse by domain, kind and source,
+or show only nodes linked into another domain. The node inspector shows the KTR cells (knowledge, thinking, reasoning),
+provenance with source, licence and attribution, validation, claims, relationships in both directions and a clickable
+neighbourhood graph. Recently opened networks are listed for one click.
+
+Measured on 13 November 2026 against a 119-million-node network over a 1 Gb/s LAN: search 0.08 to 0.75 s, a node 0.05 s,
+its neighbourhood graph 0.25 s, a browse page 0.07 s. On a local 2.2-million-node pack: search 0.07 s, a node 0.01 s.
+
 ## Measured requirements
 
 | | x86-64 package | ARM64 package |
@@ -104,7 +124,8 @@ again in free disk space the first time it runs (the core is extracted once, the
 
 The window only loads its own bundled interface. Fonts and scripts are bundled, and there is no account, telemetry or
 licence check. The backend and every running model listen on `127.0.0.1` on random ports and answer only requests that
-carry a per-launch token or the model's key. `mpn run` serves beyond this computer only with `--host` and an API key.
+carry a per-launch token or the model's key. `mpn run` serves beyond this computer only with `--host` and an API key. The one exception you choose yourself: Open MPN
+Network's "On the local network" connects the backend to the address you type.
 `scripts/offline-acceptance.sh` runs the installed app in a network namespace with only loopback and records every
 `connect()` it makes. A Complete `.mpn` file was run with no network at all (`bwrap --unshare-net`) on an empty library.
 

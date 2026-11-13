@@ -5,6 +5,7 @@ venv/
 node_modules/
 web/dist/
 data/
+!mpnstudio/library/data/
 runs/
 *.sqlite
 *.sqlite-wal

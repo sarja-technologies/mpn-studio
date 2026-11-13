@@ -17,6 +17,7 @@
       items: [
         { label: 'New network...', kbd: 'Ctrl+N', run: () => ((studio.tab = 'networks'), (desk.home = true)) },
         { label: 'Open network...', kbd: 'Ctrl+O', run: () => ((studio.tab = 'networks'), (desk.home = true)) },
+        { label: 'Open MPN Network...', run: () => ((studio.tab = 'mpnnet'), (desk.home = true)) },
         'sep',
         { label: 'Import bundle folder...', run: importBundle },
         { label: 'Import store file...', run: importStore },

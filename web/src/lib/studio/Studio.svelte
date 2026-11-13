@@ -7,12 +7,14 @@
   import Cores from './Cores.svelte';
   import Networks from './Networks.svelte';
   import Tests from './Tests.svelte';
+  import Explorer from './Explorer.svelte';
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'models', label: 'Models' },
     { id: 'cores', label: 'Cognitive cores' },
     { id: 'networks', label: 'Node networks' },
     { id: 'tests', label: 'Tests' },
+    { id: 'mpnnet', label: 'MPN Network' },
   ];
   const editing = $derived(desk.info?.project ?? null);
 
@@ -50,8 +52,10 @@
     <button class="btn quiet" onclick={() => (desk.settings = 'storage')}>Settings</button>
   </header>
 
-  <main class="scroll">
-    {#if studio.error && !studio.data}
+  <main class="scroll" class:fill={studio.tab === 'mpnnet'}>
+    {#if studio.tab === 'mpnnet'}
+      <Explorer />
+    {:else if studio.error && !studio.data}
       <div class="wrap"><p class="error-line">{studio.error}</p></div>
     {:else if !studio.data}
       <div class="wrap"><p class="muted">Reading the library</p></div>
@@ -127,6 +131,10 @@
   .tab[aria-current='page'] {
     color: var(--white);
     border-bottom-color: var(--white);
+  }
+  main.fill {
+    position: relative;
+    overflow: hidden;
   }
   main {
     flex: 1 1 auto;

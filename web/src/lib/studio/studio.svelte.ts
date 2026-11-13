@@ -69,7 +69,7 @@ export interface Overview {
   open_network: string | null;
 }
 
-export type Tab = 'models' | 'cores' | 'networks' | 'tests';
+export type Tab = 'models' | 'cores' | 'networks' | 'tests' | 'mpnnet';
 
 class Studio {
   tab = $state<Tab>('models');

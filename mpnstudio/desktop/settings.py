@@ -20,6 +20,8 @@ DEFAULTS: dict = {
         "python": None,                       # optional interpreter that has torch + the Yaob runtime (local inference/training)
         "remote": {"ssh_host": "", "ssh_config": "", "api_port": 8840, "runtime_port": 8841},
     },
+    # MPN networks opened read-only (Open MPN Network): {mode: remote|local, target: URL or folder, name, opened}
+    "networks": {"recent": []},
 }
 
 
