@@ -20,7 +20,8 @@ echo "$SHA  $DL/$TAG.tar.gz" | sha256sum -c --quiet || { echo "run scripts/fetch
 [ -d runtime/llama/cuda ] || { echo "runtime/llama/cuda is missing: run scripts/fetch-runtime.sh first (it supplies the CUDA runtime libraries)" >&2; exit 1; }
 
 W=${MPN_LLAMA_BUILD:-$PWD/build/llama-cuda}
-if [ "${MPN_REBUILD:-0}" != 1 ] && [ -x "$W/out/bin/llama-server" ] && [ "$(cat "$W/ARCHS" 2>/dev/null)" = "$TAG $ARCHS" ]; then
+STAMP="$TAG $ARCHS prefix-map"    # a build made with other settings is not reused
+if [ "${MPN_REBUILD:-0}" != 1 ] && [ -x "$W/out/bin/llama-server" ] && [ "$(cat "$W/ARCHS" 2>/dev/null)" = "$STAMP" ]; then
   echo "reusing the finished build in $W (MPN_REBUILD=1 to build again)"
 else
   rm -rf "$W"
@@ -29,17 +30,19 @@ else
   export PATH=/usr/local/cuda/bin:$PATH
   CPU=(-DGGML_CPU_ALL_VARIANTS=ON)
   [ "$(uname -m)" = aarch64 ] && CPU=(-DGGML_CPU_ALL_VARIANTS=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16)
+  MAP="-ffile-prefix-map=$W/llama.cpp-$TAG=/llama.cpp"    # source paths in assertion messages, not the build folder
   G=Ninja
   command -v ninja >/dev/null || G="Unix Makefiles"
   nice -n 15 cmake -S "$W/llama.cpp-$TAG" -B "$W/out" -G "$G" -DCMAKE_BUILD_TYPE=Release \
     -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$ARCHS" \
     -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON "${CPU[@]}" \
+    -DCMAKE_C_FLAGS="$MAP" -DCMAKE_CXX_FLAGS="$MAP" -DCMAKE_CUDA_FLAGS="-Xcompiler=$MAP" \
     -DLLAMA_BUILD_NUMBER=12318 -DLLAMA_BUILD_COMMIT=7021f7e09 \
     -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DGGML_CCACHE=OFF \
     -DCMAKE_INSTALL_RPATH='$ORIGIN' -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON > "$W/cmake.log" 2>&1
   # a full build: the dynamically loaded CPU variants are separate targets
   nice -n 15 cmake --build "$W/out" -j "${JOBS:-8}" > "$W/build.log" 2>&1 || { tail -30 "$W/build.log" >&2; exit 1; }
-  echo "$TAG $ARCHS" > "$W/ARCHS"
+  echo "$STAMP" > "$W/ARCHS"
 fi
 
 D=runtime/llama/cuda

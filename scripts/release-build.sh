@@ -43,6 +43,8 @@ echo "== 6/6 desktop bundles"
 # linuxdeploy (AppImage) copies every library an ELF file in the app needs into usr/lib, which the AppImage puts first
 # on the library path. For the llama.cpp runtime that is wrong: the NVIDIA driver (libcuda) and the Vulkan loader
 # must be the user's own, and the runtime folders already carry their libraries next to each llama-server.
+# Keep the build machine's paths (home folder, cargo registry) out of the binaries' panic messages.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$PWD=/mpn-studio"
 export LINUXDEPLOY_EXCLUDED_LIBRARIES="libcuda.so*;libnvidia*;libvulkan.so*;libggml*;libllama*;libmtmd*;libcublas*;libcudart*"
 if [ -x node_modules/.bin/tauri ]; then
   NO_STRIP=true node_modules/.bin/tauri build --bundles deb,appimage
