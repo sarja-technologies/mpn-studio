@@ -1,4 +1,4 @@
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # MPN was renamed on 2026-11: it is now the Modular Persistent Network. Identifiers (`mpn_*` tables, `mpns` API paths,
 # `yaob-mpn-package/1`, MPN_* environment variables) are unchanged for compatibility; only displayed names changed.

@@ -9,8 +9,17 @@
                     127.0.0.1:<random port>, per-launch token (header x-mpn-token), allowed origin tauri://localhost
                     SQLite project store · board geometry · search · bundles · jobs queue · optional runtime proxy
                       │
-                      ├─ local compute (optional): a Python you choose, with torch + the Yaob runtime  [Settings, Compute]
+                    library: cognitive cores · node networks (projects) · models · tasks (import, build, export, bulk delete)
+                      │
+                      ├─ per running model: mpn-backend serve-root  (127.0.0.1:<random port>, random API key)
+                      │     MPN runtime: routing, MPN tools, evidence, OpenAI-compatible /v1 API
+                      │       ├─ llama-server: the cognitive core (+ projector)      runtime/llama/{cuda,vulkan,cpu}
+                      │       └─ llama-server: the retrieval encoder, if the model has one
+                      ├─ local compute (optional): a Python you choose, with torch + the Yaob 0.1.0 runtime  [Settings, Compute]
                       └─ remote compute (optional): SSH tunnel to a machine running MPN Studio (e.g. DGX Spark)
+
+ mpn  (the same mpn-backend, started as `mpn-studio mpn …` or /usr/bin/mpn)
+       run / info / verify .mpn files, core / network / model commands, without a window
 ```
 
 * **The UI is the original Svelte application** (`web/`), changed only where a desktop needs it: a menu bar, project
@@ -28,15 +37,47 @@
   browser only when clicked. CSP allows connections to `127.0.0.1` only.
 * **Nothing is fetched at runtime**: fonts, scripts and icons are bundled; no telemetry, licence check or account.
 
+## Model builder
+
+A **model** is a cognitive core, a node network and the settings that join them. The Studio (Models, Cognitive cores,
+Node networks, Tests) manages the three; the board stays the network editor.
+
+* **Cognitive cores** are GGUF files, stored once under the first 16 hex digits of their SHA-256 and shared by every
+  model that uses them (`cores/<sha16>/model.gguf` + `core.json` with the GGUF metadata: architecture, parameters,
+  quantization, context length, licence). *Reference in place* keeps a large file where it is and records its hash. A
+  Hugging Face folder is converted to GGUF by llama.cpp's converter in a Python you choose (Settings, Compute). An
+  embedding GGUF is a **retrieval encoder**; a vision projector attaches to its core.
+* **Node networks** are the projects. Duplicate, specialise (copy the nodes that match a filter), merge (by `uid`, with
+  conflicts skipped or kept as both), compare, statistics and bulk delete run in the backend (`mpnstudio/store/netops.py`).
+  Bulk delete is one revision whatever the count, runs as a cancellable task, and is undone as one step.
+* **Build** (`mpnstudio/library/models.py`) checks that core, encoder and network fit, takes a read-only snapshot of the
+  network at its current revision, picks routing (the network's learned router when it has one that matches; otherwise
+  retrieval over the encoder's embeddings and the full-text index; otherwise text search only), starts the model, asks a
+  test question chosen from the network, and records whether the answer came from the expected node. A model whose core,
+  network or settings changed shows **Needs a build**.
+* **Run.** Each running model is its own `mpn-backend serve-root` process with its own loopback port and API key. It
+  starts `llama-server` for the core (and one for the encoder) from the first of `cuda`, `vulkan` and `cpu` that lists a
+  usable device (`llama-server --list-devices`; a software Vulkan device does not count), and tries the next if it fails
+  to start. The Studio's chat goes through the backend to that process and shows the evidence: the nodes read, cited and
+  checked, tool calls, timing and the process tree's measured memory. *Connect another app* shows the base URL, model
+  name and key for any OpenAI-compatible client.
+* **Export** writes one `.mpn` file ([`docs/MPN-FORMAT.md`](../MPN-FORMAT.md)): complete (with the GGUF files) or
+  lightweight (the core named by hash). `mpn run` and *Open .mpn file* read it back.
+* **Bench** (Tests) asks a built model a list of questions and writes the answers, evidence and timings to
+  `bench/*.json` and `*.csv`; it refuses a model that is not built.
+
 ## Data
 
 | Location | Contents |
 |---|---|
 | `~/.config/mpn-studio/settings.json` | last project, large-asset folders, compute settings |
 | `~/.local/share/mpn-studio/projects/<id>/` | `project.json` + `store.sqlite` (+ `banks/`, `bundles/`, `packages/` on demand) |
+| `~/.local/share/mpn-studio/cores/<sha16>/` | cognitive cores and encoders (`model.gguf`, optional `projector.gguf`, `core.json`) |
+| `~/.local/share/mpn-studio/models/<id>/` | `model.json` (core, network, settings, identity, last build) and `build/` (network snapshot, router, build report) |
+| `~/.local/share/mpn-studio/bench/` | test runs (`.json` and `.csv`) |
 | `~/.local/share/mpn-studio/backups/<id>/*.mpnbak` | checksummed backups (tar.gz) |
 | `~/.local/share/mpn-studio/trash/` | "deleted" projects (moved, not destroyed) |
-| `~/.cache/mpn-studio/` | disposable |
+| `~/.cache/mpn-studio/` | disposable: models extracted from opened `.mpn` files |
 | `~/.local/state/mpn-studio/logs/` | backend log |
 
 `XDG_*_HOME` apply; `MPN_STUDIO_{CONFIG,DATA,CACHE,STATE}_DIR` override one location.

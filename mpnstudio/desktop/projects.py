@@ -133,7 +133,7 @@ def summarize(db: Path) -> dict:
         c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         try:
             out["head"] = c.execute("SELECT MAX(rev) FROM revisions").fetchone()[0]
-            out["nodes"] = c.execute("SELECT COUNT(*) FROM node_v WHERE rev_to IS NULL AND status='live' AND origin<>'diagnostic'").fetchone()[0]
+            out["nodes"] = c.execute("SELECT COUNT(*) FROM node_v WHERE rev_to IS NULL AND status='live'").fetchone()[0]
             out["mpns"] = c.execute("SELECT COUNT(*) FROM mpn_v WHERE rev_to IS NULL").fetchone()[0]
         finally:
             c.close()

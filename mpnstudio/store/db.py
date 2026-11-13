@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 import sqlite3
 import threading
 import time
@@ -627,7 +628,8 @@ class Tx:
         if node_id is None:
             node_id = self.store._next_id(self.c, "node")
         if uid is None:
-            uid = f"yaob:u:{node_id}"
+            # globally unique: networks created separately must never share an identity (merge and compare match by uid)
+            uid = f"mpn:u:{uuid.uuid4().hex}"
         h = content_hash(title, summary, aliases, cells, type)
         self.c.execute("UPDATE node_v SET rev_to=? WHERE node_id=? AND rev_to IS NULL", (self.rev, node_id))
         self.c.execute(

@@ -89,7 +89,7 @@ export interface Toast {
 export type Dialog =
   | { kind: 'newNode'; x: number | null; y: number | null }
   | { kind: 'newMpn' }
-  | { kind: 'delete'; ids: string[] }
+  | { kind: 'delete'; ids: string[]; filter?: Record<string, unknown>; label?: string }
   | { kind: 'connect'; src: string; dst: string; srcTitle: string; dstTitle: string }
   | { kind: 'saveView' }
   | null;

@@ -4,9 +4,10 @@ from PyInstaller.utils.hooks import collect_submodules
 
 root = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 hidden = (collect_submodules("uvicorn") + collect_submodules("mpnstudio.api") + collect_submodules("mpnstudio.store")
-          + collect_submodules("mpnstudio.desktop") + ["mpnstudio.runtime.procedures", "mpnstudio.runtime.budget", "mpnstudio.train.jobs",
-                                                       "mpnstudio.train.gpulock", "orjson", "httpx", "psutil", "numpy"])
-a = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[root], hiddenimports=hidden, datas=[],
+          + collect_submodules("mpnstudio.desktop") + collect_submodules("mpnstudio.engine") + collect_submodules("mpnstudio.library")
+          + ["mpnstudio.runtime.procedures", "mpnstudio.runtime.budget", "mpnstudio.runtime.conversation", "mpnstudio.cli", "mpnstudio.localcli", "mpnstudio.train.jobs", "mpnstudio.train.gpulock", "orjson", "httpx", "psutil", "numpy"])
+datas = [(os.path.join(root, "mpnstudio", "library", "data"), os.path.join("mpnstudio", "library", "data"))]
+a = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[root], hiddenimports=hidden, datas=datas,
              excludes=["torch", "transformers", "peft", "accelerate", "safetensors", "tkinter", "matplotlib", "pytest", "IPython", "scipy", "pandas", "readline"],
              noarchive=False)
 pyz = PYZ(a.pure)

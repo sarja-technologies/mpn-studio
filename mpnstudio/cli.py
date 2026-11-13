@@ -367,7 +367,19 @@ def cmd_simple(a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="mpn", description="MPN Studio command line (uses the HTTP API at MPN_URL).")
+    argv = sys.argv[1:] if argv is None else argv
+    from .localcli import LOCAL
+    # local commands (build and run models on this computer); `mpn run "question"` still asks the API
+    if argv and argv[0] in LOCAL and not (argv[0] == "run" and len(argv) > 1 and not argv[1].endswith(".mpn") and not os.path.isfile(argv[1])):
+        from .localcli import main as local_main
+        return local_main(argv)
+    ap = argparse.ArgumentParser(
+        prog="mpn", description="MPN Studio command line (uses the HTTP API at MPN_URL).", formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="models on this computer (no MPN Studio window needed):\n"
+               "  mpn run FILE.mpn [--chat | --ask QUESTION] [--port 8850] [--api-key KEY] [--device auto|cuda|vulkan|cpu]\n"
+               "  mpn info FILE.mpn          mpn verify FILE.mpn\n"
+               "  mpn core list|import|import-hf|show|remove     mpn network ...     mpn model ...\n"
+               "  mpn run --help, mpn core --help, ... for the options")
     ap.add_argument("--json", action="store_true", help="print raw JSON")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(fn=cmd_status)

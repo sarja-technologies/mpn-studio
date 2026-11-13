@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app } from '../state.svelte';
-  import { get, qs, errText, human, type SearchResult } from '../api';
+  import { get, post, qs, errText, human, type SearchResult } from '../api';
   import { clickOutside } from './actions';
   import Icon from './Icon.svelte';
 
@@ -67,9 +67,43 @@
     }
     busy = false;
   }
+  // Every node that contains the text and passes the filters (text match only, never "meaning"), for bulk actions.
+  let matching = $state<{ count: number; ids: string[] } | null>(null);
+  const bulkFilter = () => {
+    const out: Record<string, unknown> = {};
+    if (q.trim() && !/^\d+$/.test(q.trim())) out.q = q.trim();
+    if (f.type) out.type = f.type;
+    if (f.status) out.status = f.status;
+    if (f.validation) out.validation = f.validation;
+    if (f.origin) out.origin = f.origin;
+    if (f.mpn_id) out.mpn = f.mpn_id;
+    return out;
+  };
+  async function countMatching() {
+    const filt = bulkFilter();
+    if (!Object.keys(filt).length || f.status === 'tombstone') return (matching = null);
+    try {
+      matching = await post<{ count: number; ids: string[] }>('api/nodes/select', { filter: filt });
+    } catch {
+      matching = null;
+    }
+  }
+  function selectAll() {
+    if (!matching) return;
+    app.select(matching.ids, false);
+    close();
+    input.blur();
+    app.toast(`Selected ${matching.count.toLocaleString()} nodes.`);
+  }
+  function deleteAll() {
+    if (!matching) return;
+    const label = `${matching.count.toLocaleString()} matching ${matching.count === 1 ? 'node' : 'nodes'}`;
+    app.dialog = { kind: 'delete', ids: [], filter: bulkFilter(), label };
+    close();
+  }
   function changed() {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => run(), 140);
+    timer = setTimeout(() => (run(), countMatching()), 140);
   }
   $effect(() => {
     q;
@@ -216,11 +250,22 @@
         </p>
       {/if}
       {#if more}<button class="btn more" onclick={() => run(results.length)}>Show more</button>{/if}
+      {#if matching && matching.count > 0}
+        <div class="all row">
+          <span class="grow muted num">{matching.count.toLocaleString()} {matching.count === 1 ? 'node' : 'nodes'} {q.trim() && bulkFilter().q ? `contain “${q.trim()}”` : 'match'}{q.trim() && bulkFilter().q && Object.keys(bulkFilter()).length > 1 ? ' and the filters' : ''}</span>
+          <button class="btn" onclick={selectAll}>Select all</button>
+          <button class="btn danger" onclick={deleteAll}>Delete all…</button>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
 
 <style>
+  .all {
+    padding: 6px 8px;
+    border-top: 1px solid var(--line);
+  }
   .search {
     position: relative;
     flex: 0 1 460px;

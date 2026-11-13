@@ -12,7 +12,8 @@
   import Icon from './lib/ui/Icon.svelte';
   import { clickOutside } from './lib/ui/actions';
   import MenuBar from './lib/ui/MenuBar.svelte';
-  import ProjectHome from './lib/ui/ProjectHome.svelte';
+  import Studio from './lib/studio/Studio.svelte';
+  import { studio } from './lib/studio/studio.svelte';
   import SettingsDialog from './lib/ui/SettingsDialog.svelte';
   import HelpDialog from './lib/ui/HelpDialog.svelte';
   import { bootBackend, desk, errText, isTauri, native } from './lib/desktop.svelte';
@@ -41,7 +42,7 @@
     if (mod && !e.altKey) {
       const k = e.key.toLowerCase();
       if (k === 'n' && !e.shiftKey) return (e.preventDefault(), newProject());
-      if (k === 'o') return (e.preventDefault(), (desk.home = true));
+      if (k === 'o') return (e.preventDefault(), (studio.tab = 'networks'), (desk.home = true));
       if (k === 's' && !e.shiftKey) return (e.preventDefault(), void saveProject());
       if (k === 'e' && e.shiftKey) return (e.preventDefault(), void exportProject());
       if (k === ',') return (e.preventDefault(), (desk.settings = 'storage'));
@@ -148,7 +149,8 @@
 {:else if !desk.ready}
   <div class="boot"><p class="muted">Starting MPN Studio</p></div>
 {:else if desk.needsProject}
-  <ProjectHome />
+  <Studio />
+  <Toasts />
 {:else}
 <div class="app">
   <header class="top">
@@ -157,7 +159,8 @@
       <span class="name">MPN Studio</span>
     </div>
     <MenuBar onsearch={() => search?.focus()} />
-    <button class="proj" title="Open or switch project (Ctrl+O)" onclick={() => (desk.home = true)}>{desk.project?.name}</button>
+    <button class="studio-btn btn" title="Models, cores and networks" onclick={() => (desk.home = true)}>Studio</button>
+    <button class="proj" title="Switch network (Ctrl+O)" onclick={() => ((studio.tab = 'networks'), (desk.home = true))}>{desk.project?.name}</button>
     <Search bind:this={search} />
     <div class="spacer"></div>
     <div class="rev">
@@ -209,7 +212,7 @@
   <Toasts />
 </div>
 {/if}
-{#if desk.ready && desk.project && desk.home}<ProjectHome overlay />{/if}
+{#if desk.ready && desk.project && desk.home}<Studio />{/if}
 <SettingsDialog />
 <HelpDialog />
 {#if desk.busy}<div class="busy" role="status">{desk.busy}</div>{/if}

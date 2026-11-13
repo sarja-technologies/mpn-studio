@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { studio } from '../studio/studio.svelte';
   import { app, PANELS } from '../state.svelte';
   import { desk } from '../desktop.svelte';
   import { backupNow, exportProject, importBundle, importStore, openBackupFile, quitApp, saveProject } from '../desktop-actions';
@@ -14,18 +15,18 @@
     {
       label: 'File',
       items: [
-        { label: 'New project...', kbd: 'Ctrl+N', run: () => (desk.home = true) },
-        { label: 'Open project...', kbd: 'Ctrl+O', run: () => (desk.home = true) },
+        { label: 'New network...', kbd: 'Ctrl+N', run: () => ((studio.tab = 'networks'), (desk.home = true)) },
+        { label: 'Open network...', kbd: 'Ctrl+O', run: () => ((studio.tab = 'networks'), (desk.home = true)) },
         'sep',
         { label: 'Import bundle folder...', run: importBundle },
         { label: 'Import store file...', run: importStore },
         { label: 'Open backup file...', run: () => openBackupFile() },
         'sep',
         { label: 'Save', kbd: 'Ctrl+S', run: saveProject, disabled: !hasProject },
-        { label: 'Export project as bundle...', kbd: 'Ctrl+Shift+E', run: exportProject, disabled: !hasProject },
+        { label: 'Export network as bundle...', kbd: 'Ctrl+Shift+E', run: exportProject, disabled: !hasProject },
         { label: 'Back up now', run: backupNow, disabled: !hasProject },
         'sep',
-        { label: 'Close project', run: () => desk.closeProject(), disabled: !hasProject },
+        { label: 'Close network', run: () => desk.closeProject(), disabled: !hasProject },
         'sep',
         { label: 'Settings...', kbd: 'Ctrl+,', run: () => (desk.settings = 'storage') },
         { label: 'Quit', kbd: 'Ctrl+Q', run: quitApp },

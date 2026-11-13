@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS domain_mpn_head ON domain_v(mpn_id) WHERE rev_to IS N
 
 CREATE TABLE IF NOT EXISTS node_v(
   vid INTEGER PRIMARY KEY, node_id INTEGER NOT NULL,
-  uid TEXT NOT NULL,                           -- portable identity, e.g. yaob:wd:Q48314 or yaob:u:<id>
+  uid TEXT NOT NULL,                           -- portable identity, e.g. yaob:wd:Q48314, yaob:u:<id> (older nodes) or mpn:u:<uuid>
   type TEXT NOT NULL,                          -- knowledge | procedure | rule | tool | learned_memory
   title TEXT NOT NULL,
   summary TEXT NOT NULL DEFAULT '',

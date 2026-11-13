@@ -37,3 +37,6 @@ web/e2e/screenshots/
 web/test-results/
 web/playwright-report/
 src-tauri/gen/
+
+# platform runtime (llama.cpp builds), filled by scripts/fetch-runtime.sh
+/runtime/

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MPN Studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "me.fylume.mpnstudio",
   "build": {
     "frontendDist": "../web/dist"
@@ -20,8 +20,8 @@
       "appimage"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "MPN Studio: visual workbench for Modular Persistent Networks",
-    "longDescription": "MPN Studio is the Fylume workbench for Yaob modular persistent networks (MPN). Edit nodes, cells and relations on a visual whiteboard, keep projects on your computer, and work fully offline. Optional remote compute can be connected separately.",
+    "shortDescription": "MPN Studio: build, test and export MPN models",
+    "longDescription": "MPN Studio builds models from a cognitive core (GGUF or Hugging Face) and a Modular Persistent Network of nodes. Create, edit, merge and test node networks, build a model, chat with it with the evidence it used, serve it through an OpenAI-compatible local API, and export it as a single .mpn file that runs with the mpn command. Everything runs on your computer, offline.",
     "copyright": "Fylume",
     "icon": [
       "icons/32x32.png",
@@ -31,6 +31,7 @@
     ],
     "resources": {
       "../build/backend/": "backend/",
+      "../runtime/": "runtime/",
       "../LICENSE": "licenses/LICENSE",
       "../NOTICE": "licenses/NOTICE",
       "../THIRD-PARTY.md": "licenses/THIRD-PARTY.md",
@@ -42,7 +43,8 @@
         "priority": "optional",
         "desktopTemplate": "../packaging/linux/mpn-studio.desktop",
         "files": {
-          "/usr/share/mime/packages/mpn-studio.xml": "../packaging/linux/mpn-studio-mime.xml"
+          "/usr/share/mime/packages/mpn-studio.xml": "../packaging/linux/mpn-studio-mime.xml",
+          "/usr/bin/mpn": "../packaging/linux/mpn"
         }
       },
       "appimage": {
@@ -50,6 +52,15 @@
       }
     },
     "fileAssociations": [
+      {
+        "ext": [
+          "mpn"
+        ],
+        "name": "MPN model",
+        "description": "MPN model file",
+        "mimeType": "application/x-mpn-model",
+        "role": "Viewer"
+      },
       {
         "ext": [
           "mpnbak"

@@ -3,6 +3,7 @@
   import { app } from '../state.svelte';
   import { get, post, del, errText, ApiError, plural, human, type SchemaEntry } from '../api';
   import Modal from './Modal.svelte';
+  import { studio, type TaskView } from '../studio/studio.svelte';
 
   const d = $derived(app.dialog);
   const close = () => (app.dialog = null);
@@ -103,35 +104,77 @@
     checkpoint: string | null;
     note: string;
   }
-  const MAX_DELETE = 60;
+  // One node: the detailed preview. Several (any number, or every node matching a search): one bulk preview, one revision.
+  interface BulkPreview {
+    count: number;
+    live: number;
+    relations: number;
+    by_mpn: { mpn: string; nodes: number }[];
+    sample: string[];
+    note: string;
+  }
   let previews = $state.raw<Preview[] | null>(null);
+  let bulk = $state.raw<BulkPreview | null>(null);
+  let task = $state.raw<TaskView | null>(null);
+  const target = (d: { ids: string[]; filter?: Record<string, unknown> }) => (d.filter ? { filter: d.filter } : { ids: d.ids });
   $effect(() => {
     const d = app.dialog;
     untrack(() => {
       if (d?.kind !== 'delete') return;
       previews = null;
+      bulk = null;
+      task = null;
       error = null;
-      if (d.ids.length > MAX_DELETE) return;
-      Promise.all(d.ids.map((id) => get<Preview>(`api/nodes/${id}/delete-preview`)))
-        .then((p) => (previews = p))
-        .catch((e) => (error = errText(e)));
+      if (!d.filter && d.ids.length === 1)
+        get<Preview>(`api/nodes/${d.ids[0]}/delete-preview`)
+          .then((p) => (previews = [p]))
+          .catch((e) => (error = errText(e)));
+      else
+        post<BulkPreview>('api/nodes/bulk-preview', target(d))
+          .then((p) => (bulk = p))
+          .catch((e) => (error = errText(e)));
     });
   });
   async function doDelete() {
-    if (d?.kind !== 'delete' || !previews) return;
-    const ids = d.ids;
+    if (d?.kind !== 'delete') return;
     busy = true;
-    try {
-      let last: any;
-      for (const id of ids) last = await del(`api/nodes/${id}`);
-      close();
-      app.selection = [];
-      await app.afterEdit(last);
-      app.toast(`Deleted ${ids.length === 1 ? '“' + previews[0].node.title + '”' : ids.length + ' nodes'}. Deleted nodes can be restored.`, 'info', { label: 'Restore', run: () => restore(ids) });
-    } catch (e) {
-      error = errText(e);
+    error = null;
+    if (previews) {
+      const ids = d.ids;
+      try {
+        const last = await del(`api/nodes/${ids[0]}`);
+        close();
+        app.selection = [];
+        await app.afterEdit(last);
+        app.toast(`Deleted “${previews[0].node.title}”. Deleted nodes can be restored.`, 'info', { label: 'Restore', run: () => restore(ids) });
+      } catch (e) {
+        error = errText(e);
+      }
+      busy = false;
+      return;
     }
+    const t = await studio.follow(post<TaskView>('api/nodes/bulk-delete', target(d)), (t) => (task = t)).catch((e) => ((error = errText(e)), null));
     busy = false;
+    if (!t) return;
+    if (t.state !== 'done') {
+      error = t.error ?? 'The deletion did not finish. Nothing was changed.';
+      task = null;
+      return;
+    }
+    const r = t.result;
+    close();
+    app.selection = [];
+    await app.afterEdit({ rev: r.rev });
+    app.toast(`Deleted ${r.deleted.toLocaleString()} nodes in revision ${r.rev}.`, 'info', { label: 'Undo', run: () => undoBulk(r.rev) });
+  }
+  async function undoBulk(rev: number) {
+    try {
+      const r = await post<{ rev: number }>('api/nodes/bulk-restore', { rev });
+      await app.afterEdit({ rev: r.rev });
+      app.toast(`Restored. Now at revision ${r.rev}.`);
+    } catch (e) {
+      app.toast(errText(e), 'error');
+    }
   }
   async function restore(ids: string[]) {
     try {
@@ -249,34 +292,50 @@
     </form>
   </Modal>
 {:else if d?.kind === 'delete'}
-  <Modal title={d.ids.length === 1 ? 'Delete this node?' : `Delete ${d.ids.length} nodes?`} onclose={close} width={460}>
-    {#if d.ids.length > MAX_DELETE}
-      <p>Select at most {MAX_DELETE} nodes to delete at once, so each can be previewed.</p>
-      <div class="actions"><button class="btn" onclick={close}>Close</button></div>
-    {:else if error && !previews}
+  {@const n = bulk?.count ?? d.ids.length}
+  <Modal title={d.label ? `Delete ${d.label}?` : n === 1 ? 'Delete this node?' : `Delete ${n.toLocaleString()} nodes?`} onclose={() => !task && close()} width={480}>
+    {#if error && !previews && !bulk}
       <p class="error-line">{error}</p>
       <div class="actions"><button class="btn" onclick={close}>Close</button></div>
-    {:else if !previews}
-      <p class="muted">Reading what the deletion affects</p>
-    {:else}
-      {@const edges = previews.reduce((a, p) => a + p.edges, 0)}
-      {@const rows = previews.reduce((a, p) => a + p.learned_rows.length, 0)}
-      {@const mems = previews.reduce((a, p) => a + p.memberships.length, 0)}
+    {:else if previews}
+      {@const p = previews[0]}
       <div class="what">
-        {#if previews.length === 1}
-          <p class="strong">{previews[0].node.title}</p>
-          <p>Member of {previews[0].memberships.map((m) => `${m.mpn_name} (${m.role})`).join(', ')}.</p>
-        {:else}
-          <p class="strong">{previews.slice(0, 4).map((p) => p.node.title).join(', ')}{previews.length > 4 ? ` and ${previews.length - 4} more` : ''}</p>
-          <p>{plural(mems, 'membership')} in total.</p>
-        {/if}
-        <p>{plural(edges, 'edge')} to other nodes and {plural(rows, 'learned row')} are affected.</p>
-        <p class="muted">{previews[0].note}</p>
+        <p class="strong">{p.node.title}</p>
+        <p>Member of {p.memberships.map((m) => `${m.mpn_name} (${m.role})`).join(', ')}.</p>
+        <p>{plural(p.edges, 'edge')} to other nodes and {plural(p.learned_rows.length, 'learned row')} are affected.</p>
+        <p class="muted">{p.note}</p>
       </div>
       {#if error}<p class="error-line">{error}</p>{/if}
       <div class="actions">
         <button class="btn" onclick={close}>Cancel</button>
-        <button class="btn danger" disabled={busy} onclick={doDelete}>{previews.length === 1 ? 'Delete node' : `Delete ${previews.length} nodes`}</button>
+        <button class="btn danger" disabled={busy} onclick={doDelete}>Delete node</button>
+      </div>
+    {:else if !bulk}
+      <p class="muted">Reading what the deletion affects</p>
+    {:else if bulk.count === 0}
+      <p>No node matches.</p>
+      <div class="actions"><button class="btn" onclick={close}>Close</button></div>
+    {:else}
+      <div class="what">
+        <p class="strong">{bulk.sample.slice(0, 4).join(', ')}{bulk.count > 4 ? ` and ${(bulk.count - Math.min(4, bulk.sample.length)).toLocaleString()} more` : ''}</p>
+        {#if bulk.by_mpn.length}
+          <p>{bulk.by_mpn.slice(0, 5).map((m) => `${m.nodes.toLocaleString()} in ${m.mpn}`).join(', ')}{bulk.by_mpn.length > 5 ? ', and others' : ''}.</p>
+        {/if}
+        <p>{plural(bulk.relations, 'relation')} to or from these nodes will be closed.</p>
+        <p class="muted">{bulk.note}</p>
+      </div>
+      {#if task?.state === 'running'}
+        <div class="bar"><i style="width:{task.progress.total ? Math.round((task.progress.done / task.progress.total) * 100) : 0}%"></i></div>
+        <p class="muted num">{task.progress.done.toLocaleString()} of {task.progress.total.toLocaleString()}</p>
+      {/if}
+      {#if error}<p class="error-line">{error}</p>{/if}
+      <div class="actions">
+        {#if task?.state === 'running'}
+          <button class="btn" onclick={() => studio.cancel(task!.id)}>Cancel</button>
+        {:else}
+          <button class="btn" onclick={close}>Cancel</button>
+          <button class="btn danger" disabled={busy} onclick={doDelete}>Delete {bulk.count.toLocaleString()} {bulk.count === 1 ? 'node' : 'nodes'}</button>
+        {/if}
       </div>
     {/if}
   </Modal>
@@ -344,6 +403,17 @@
   }
   .strong {
     font-weight: 500;
+  }
+  .bar {
+    height: 4px;
+    background: var(--line-soft);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .bar > i {
+    display: block;
+    height: 100%;
+    background: var(--white);
   }
   .pair {
     display: grid;

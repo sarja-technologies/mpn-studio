@@ -106,10 +106,15 @@ class CitationFilter:
         cut = max(self.out.rfind(". "), self.out.rfind("! "), self.out.rfind("? "), self.out.rfind("\n"))
         return self.out[cut + 1:]
 
+    # "the nodes [1], [2] and [4] describe ...": a number that names a supplied node is a reference, not a claim
+    NAMING = re.compile(r"(?:\bnodes?|\bsources?|,|\band|\bor|\bin|\(|\])\s*$", re.I)
+
     def _decide(self, k: int) -> bool:
         if not 1 <= k <= len(self.node_texts):
             self.removed.append({"n": k, "reason": "no node with this number was supplied"})
             return False
+        if self.NAMING.search(self.out) and not self.out.rstrip().endswith(("., ", ".,")):
+            return True
         if not supports(self._sentence(), self.node_texts[k - 1]):
             self.removed.append({"n": k, "reason": "the sentence it closes is not supported by that node's text"})
             return False
@@ -121,9 +126,11 @@ class CitationFilter:
         while self.buf:
             i = self.buf.find("[")
             if i < 0:
-                emit += self.buf
-                self.out += self.buf
-                self.buf = ""
+                # hold trailing spaces back: a citation may follow, and a dropped one takes its space with it
+                body = self.buf.rstrip(" ")
+                emit += body
+                self.out += body
+                self.buf = self.buf[len(body):]
                 break
             # release everything before a possible citation (keep trailing spaces with the citation)
             j = i

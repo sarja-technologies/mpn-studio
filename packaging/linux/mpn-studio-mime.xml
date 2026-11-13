@@ -4,4 +4,8 @@
     <comment>MPN Studio project backup</comment>
     <glob pattern="*.mpnbak"/>
   </mime-type>
+  <mime-type type="application/x-mpn-model">
+    <comment>MPN model</comment>
+    <glob pattern="*.mpn"/>
+  </mime-type>
 </mime-info>

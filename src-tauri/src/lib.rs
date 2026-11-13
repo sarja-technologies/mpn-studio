@@ -36,7 +36,7 @@ struct OpenFiles(Mutex<Vec<String>>);
 fn backup_args(args: &[String], cwd: &str) -> Vec<String> {
     args.iter()
         .skip(1)
-        .filter(|a| a.ends_with(".mpnbak"))
+        .filter(|a| a.ends_with(".mpnbak") || a.ends_with(".mpn"))
         .map(|a| {
             let p = PathBuf::from(a);
             if p.is_absolute() { p } else { PathBuf::from(cwd).join(p) }
@@ -100,16 +100,17 @@ fn backend_command(app: &AppHandle) -> Result<Command, String> {
         }
         return Ok(c);
     }
-    let exe = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?
-        .join("backend")
-        .join("mpn-backend");
+    let res = app.path().resource_dir().map_err(|e| e.to_string())?;
+    let exe = res.join("backend").join("mpn-backend");
     if !exe.is_file() {
         return Err(format!("The local backend is missing from this installation ({}).", exe.display()));
     }
-    Ok(Command::new(exe))
+    let mut c = Command::new(exe);
+    // llama.cpp builds for this machine architecture, shipped next to the backend
+    if std::env::var_os("MPN_RUNTIME_DIR").is_none() {
+        c.env("MPN_RUNTIME_DIR", res.join("runtime"));
+    }
+    Ok(c)
 }
 
 fn start_backend(app: &AppHandle) -> Backend {
@@ -268,7 +269,37 @@ fn set_window_title(window: WebviewWindow, title: String) -> Result<(), String> 
     window.set_title(&title).map_err(|e| e.to_string())
 }
 
+/// `mpn-studio mpn …` runs the bundled `mpn` command line (run, inspect, verify .mpn files) without opening a window.
+/// The backend and runtime sit beside the binary: <prefix>/bin/mpn-studio and <prefix>/lib/MPN Studio/ in both the
+/// .deb (/usr) and the AppImage ($APPDIR/usr).
+fn cli_passthrough() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) != Some("mpn") {
+        return;
+    }
+    let exe = std::env::current_exe().ok().and_then(|p| fs::canonicalize(p).ok());
+    let lib = exe.as_ref().and_then(|p| p.parent()).and_then(|p| p.parent()).map(|p| p.join("lib").join("MPN Studio"));
+    let backend = lib.as_ref().map(|l| l.join("backend").join("mpn-backend"));
+    match (lib, backend) {
+        (Some(lib), Some(b)) if b.is_file() => {
+            let mut c = Command::new(b);
+            c.args(&args[1..]);
+            if std::env::var_os("MPN_RUNTIME_DIR").is_none() {
+                c.env("MPN_RUNTIME_DIR", lib.join("runtime"));
+            }
+            let e = c.exec();
+            eprintln!("mpn: could not start the bundled backend: {e}");
+            std::process::exit(1);
+        }
+        _ => {
+            eprintln!("mpn: the bundled backend is missing from this installation");
+            std::process::exit(1);
+        }
+    }
+}
+
 pub fn run() {
+    cli_passthrough();
     // WebKitGTK's DMABUF renderer is a known source of blank windows and web-process crashes on NVIDIA/Wayland.
     // The board is a canvas, so the fallback path costs nothing visible. Set the variable yourself to override.
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {

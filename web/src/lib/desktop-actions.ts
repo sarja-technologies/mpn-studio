@@ -1,5 +1,6 @@
 // File-menu level actions of the desktop app. Each one reports its real outcome (or the server's refusal) as a toast.
 import { app } from './state.svelte';
+import { studio } from './studio/studio.svelte';
 import { desk, errText, get, isTauri, native, pickFile, pickFolder, post } from './desktop.svelte';
 import { fmtBytes, fmtInt } from './api';
 
@@ -14,7 +15,7 @@ async function run<T>(label: string, f: () => Promise<T>): Promise<T | undefined
   }
 }
 
-export const newProject = () => ((desk.home = true), undefined);
+export const newProject = () => ((studio.tab = 'networks'), (desk.home = true), undefined);
 
 export async function saveProject() {
   const r = await run('Saving...', () => post<{ head: number }>('api/desktop/project/save'));
@@ -56,7 +57,12 @@ export async function openBackupFile(file?: string) {
 export async function openFilesFromSystem() {
   if (!isTauri()) return;
   const files = await native<string[]>('take_open_files').catch(() => [] as string[]);
-  if (files[0]) await openBackupFile(files[0]);
+  const f = files[0];
+  if (!f) return;
+  if (f.endsWith('.mpn')) {
+    desk.home = true;
+    await studio.openMpn(f);
+  } else await openBackupFile(f);
 }
 
 export async function backupNow() {

@@ -1,8 +1,9 @@
 [project]
 name = "mpnstudio"
-version = "0.1.0"
+version = "0.2.0"
 description = "MPN Studio: workbench and runtime for Yaob modular node networks (Fylume)"
 requires-python = ">=3.12"
+license = "Apache-2.0"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",

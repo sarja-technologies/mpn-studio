@@ -41,12 +41,28 @@ export async function bootBackend(): Promise<void> {
   configureBackend(b.base, b.token);
 }
 
+// Which screen a reload returns to: the Studio (default, also at launch) or the network editor right after opening a network.
+function readView(): string | null {
+  try {
+    return sessionStorage.getItem('mpn-view');
+  } catch {
+    return null;
+  }
+}
+export function saveView(v: 'editor' | 'studio') {
+  try {
+    sessionStorage.setItem('mpn-view', v);
+  } catch {
+    /* private mode: the Studio is shown after a reload */
+  }
+}
+
 class Desk {
   ready = $state(false);
   bootError = $state<string | null>(null);
   info = $state.raw<DesktopInfo | null>(null);
   /** the project chooser is shown over the workspace (File > Open) or instead of it (no project) */
-  home = $state(false);
+  home = $state(readView() !== 'editor');
   settings = $state<null | 'storage' | 'compute' | 'backups'>(null);
   help = $state<null | 'names' | 'shortcuts' | 'about'>(null);
   busy = $state<string | null>(null);
@@ -67,7 +83,8 @@ class Desk {
     location.reload();
   }
   async openProject(id: string) {
-    this.busy = 'Opening project...';
+    this.busy = 'Opening the network...';
+    saveView('editor');
     try {
       await post(`api/desktop/projects/${id}/open`);
       this.reloadApp();
@@ -80,6 +97,7 @@ class Desk {
     this.reloadApp();
   }
   async closeProject() {
+    saveView('studio');
     await post('api/desktop/project/close');
     this.reloadApp();
   }

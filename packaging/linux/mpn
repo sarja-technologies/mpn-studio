@@ -1,0 +1,3 @@
+#!/bin/sh
+# mpn: run, inspect and verify .mpn model files with the backend bundled in MPN Studio.
+exec /usr/bin/mpn-studio mpn "$@"
