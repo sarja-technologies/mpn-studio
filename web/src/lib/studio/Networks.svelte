@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { work } from '../work/work.svelte';
   import { app } from '../state.svelte';
   import { desk, openInFileManager } from '../desktop.svelte';
   import { openBackupFile } from '../desktop-actions';
@@ -72,7 +73,10 @@
   async function open(n: NetworkRow) {
     error = null;
     try {
-      if (n.id === openId && desk.project) desk.home = false;
+      if (n.id === openId && desk.project) {
+        work.library = false;
+        desk.home = false;
+      }
       else await desk.openProject(n.id);
     } catch (e) {
       error = errText(e);

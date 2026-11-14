@@ -73,9 +73,16 @@ class Local:
                 "target_nodes": None, "construction": None,
                 "last_validation": {"verified_at": m.get("created"), "ok": True, "note": "pack manifest"} if m else None}
         fed = Federation([{"pack_id": m.get("pack_id") or root.name, "version": m.get("version"), "parts": str(parts), "partitions": n}],
-                         cache_kib=4096)
+                         cache_kib=1024)
         if not fed.packs:
             raise NetError("The partitions could not be opened read-only.", 500)
+        # search the partitions in parallel with a small fixed pool: each worker keeps one read-only handle per partition
+        # with a 1 MiB page cache (at most 6 x 64 MiB), so memory stays bounded however large the network is
+        import os as _os
+        from concurrent.futures import ThreadPoolExecutor
+        self.pool = ThreadPoolExecutor(max_workers=max(2, min(6, (_os.cpu_count() or 4) // 2)), thread_name_prefix="mpn-search")
+        for _p, st in fed.packs:
+            st.pool = self.pool
         self.reader = NetworkReader(fed, info)
         self.target, self.name = str(root), info["name"]
         self.lock = threading.Lock()
@@ -106,6 +113,7 @@ class Local:
         raise NetError("Unknown query.", 404)
 
     def close(self):
+        self.pool.shutdown(wait=False, cancel_futures=True)
         for _p, st in self.reader.fed.packs:
             st.close()
 

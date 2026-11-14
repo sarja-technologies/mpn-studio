@@ -120,7 +120,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     r.set_cookie("mpn_session", SESSION_TOKEN, httponly=True, samesite="strict", path="/")
                     return r
                 return PlainTextResponse("MPN Studio: this local service only answers its own window.", status_code=401)
-        if store is None and request.url.path.startswith(("/api/", "/v1/")) and not request.url.path.startswith(("/api/desktop/", "/api/library/")) and request.url.path != "/api/health":
+        if store is None and request.url.path.startswith(("/api/", "/v1/")) and not request.url.path.startswith(("/api/desktop/", "/api/library/", "/api/projects", "/api/ws/")) and request.url.path != "/api/health":
             return JSONResponse({"error": "No project is open.", "code": "no_project"}, status_code=409)
         peer = request.client.host if request.client else ""
         try:
@@ -713,10 +713,40 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             roots.insert(0, ck)
         return os.pathsep.join(roots)
 
+    def _remember(slug: str) -> None:
+        rec = [r for r in dsettings.load().get("recent_projects") or [] if r.get("id") != slug]
+        rec.insert(0, {"id": slug, "opened": time.time()})
+        dsettings.update({"last_project": slug, "recent_projects": rec[:20]})
+
     def open_project(slug: str) -> dict:
         nonlocal store
         dcompute.local.stop()                       # the runtime and worker belong to the project that was open
+        m0 = dprojects.read_manifest(slug)
+        if dprojects.kind_of(m0) != "network":
+            from ..workspace.network import Workspace
+            m = dprojects.prepare_open(slug)
+            w = Workspace(slug, m, dprojects.project_dir(slug))
+            try:
+                w.connect()                          # an unreachable network still opens: the workspace says why
+            except Exception:
+                w.close()
+                raise
+            with swap:
+                old, store = store, None
+                app.state.store = None
+                if old is not None:
+                    old.checkpoint_wal()
+                    old.close()
+                oldw, ctx["ws"] = ctx.get("ws"), w
+                ctx["project"] = slug
+            if oldw is not None:
+                oldw.close()
+            _remember(slug)
+            return m
         with swap:
+            oldw, ctx["ws"] = ctx.get("ws"), None
+            if oldw is not None:
+                oldw.close()
             m = dprojects.prepare_open(slug)          # backs up first if a migration is needed
             new = Store(dprojects.store_path(slug))
             schemas.seed_schemas(new)
@@ -730,7 +760,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             os.environ["MPN_DB"] = str(dprojects.store_path(slug))
             os.environ["MPN_CHECKPOINT_ROOTS"] = checkpoint_roots(slug)
             ctx["project"] = slug
-            dsettings.update({"last_project": slug})
+            _remember(slug)
             return m
 
     def close_project() -> None:
@@ -742,6 +772,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             if old is not None:
                 old.checkpoint_wal()
                 old.close()
+            oldw, ctx["ws"] = ctx.get("ws"), None
+            if oldw is not None:
+                oldw.close()
             ctx["project"] = None
 
     def need_open() -> Store:
@@ -753,7 +786,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         if not ctx["project"]:
             return None
         m = dprojects.read_manifest(ctx["project"])
-        return {"id": ctx["project"], "name": m.get("name"), "origin": m.get("origin"), "created": m.get("created"), "head": store.head() if store else None,
+        return {"id": ctx["project"], "name": m.get("name"), "kind": dprojects.kind_of(m), "core": (m.get("references") or {}).get("core"),
+                "origin": m.get("origin"), "created": m.get("created"), "head": store.head() if store else None,
                 "path": str(dprojects.project_dir(ctx["project"])), "architecture": m.get("architecture")}
 
     @app.get("/api/desktop/info")
@@ -824,7 +858,14 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/desktop/project/backup")
     def desktop_project_backup():
-        need_open().checkpoint_wal()
+        w = ctx.get("ws")
+        if w is not None:                 # a linked network or fork: its own small files (the base is never copied)
+            if w.overlay:
+                w.overlay.checkpoint()
+        else:
+            need_open().checkpoint_wal()
+        if not ctx["project"]:
+            raise dprojects.ProjectError("No project is open.", 409)
         p = dprojects.backup(ctx["project"], reason="manual")
         return {"file": str(p), "bytes": p.stat().st_size, "backups": dprojects.list_backups(ctx["project"])}
 
@@ -977,6 +1018,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     # ------------------------------------------------------------------ model builder (library of cores, networks, models)
     from . import library_routes
     library_routes.register(app, get_store=lambda: store, open_project=open_project, current_project=lambda: ctx["project"])
+    from ..workspace import routes as ws_routes
+    ws_routes.register(app, ctx, get_store=lambda: store, open_project=open_project, close_project=close_project,
+                       start_task=library_routes.start_task)
 
     # ------------------------------------------------------------------ web UI
     @app.get("/{path:path}")

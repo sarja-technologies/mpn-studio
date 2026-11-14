@@ -29,7 +29,7 @@ export interface DesktopInfo {
   architecture: string;
   legacy_architecture_name: string;
   paths: Record<string, string>;
-  project: { id: string; name: string; head: number; path: string; origin?: any } | null;
+  project: { id: string; name: string; kind?: 'network' | 'linked' | 'fork'; core?: string | null; head: number | null; path: string; origin?: any } | null;
   projects: ProjectRow[];
   settings: any;
 }
@@ -41,7 +41,7 @@ export async function bootBackend(): Promise<void> {
   configureBackend(b.base, b.token);
 }
 
-// Which screen a reload returns to: the Studio (default, also at launch) or the network editor right after opening a network.
+// Which screen a reload returns to: the home screen (default, also at launch) or the workspace right after opening a project.
 function readView(): string | null {
   try {
     return sessionStorage.getItem('mpn-view');
@@ -61,7 +61,7 @@ class Desk {
   ready = $state(false);
   bootError = $state<string | null>(null);
   info = $state.raw<DesktopInfo | null>(null);
-  /** the project chooser is shown over the workspace (File > Open) or instead of it (no project) */
+  /** the home screen is shown over the open project's workspace, or instead of it when no project is open */
   home = $state(readView() !== 'editor');
   settings = $state<null | 'storage' | 'compute' | 'backups'>(null);
   help = $state<null | 'names' | 'shortcuts' | 'about'>(null);

@@ -281,7 +281,7 @@ def client(tmp_path, monkeypatch):
 
 
 def _wait(c, t):
-    for _ in range(200):
+    for _ in range(2400):                       # up to two minutes; returns as soon as the task ends
         t = c.get(f"/api/library/tasks/{t['id']}").json()
         if t["state"] != "running":
             return t
@@ -343,3 +343,44 @@ def test_engine_uses_the_running_apps_runtime_not_a_recorded_path(tmp_path, monk
     assert Engine(root, root / "data").p("runtime") == live / "llama"
     monkeypatch.setenv("MPN_RUNTIME_DIR", str(tmp_path / "empty"))      # no usable live runtime: the recorded path is kept
     assert Engine(root, root / "data").p("runtime") == tmp_path / "gone" / "llama"
+
+
+# ------------------------------------------------------------------------------------------------ large selections
+BIG = 5000
+
+
+def test_bulk_delete_five_thousand_selected_nodes_one_revision_and_undo(tmp_path):
+    s = seed(tmp_path / "big.sqlite", n=BIG + 100)
+    chosen = s.ids[:BIG]
+    head = s.head()
+    r = netops.bulk_delete(s, chosen)
+    assert r["deleted"] == BIG and r["missing"] == 0 and r["already"] == 0
+    assert s.head() == head + 1 == r["rev"]
+    assert live(s) == 100
+    s.revert(r["rev"], kind="undo")
+    assert live(s) == BIG + 100
+    assert s.q1("SELECT COUNT(*) FROM edge_v WHERE rev_to IS NULL")[0] == BIG + 99
+
+
+def test_api_server_mode_deletes_a_five_thousand_node_selection(tmp_path, monkeypatch):
+    """The web Studio (server mode, as deployed on the Spark): a selection of 5,000 node ids goes to the server in one
+    request, is deleted as one revision by a task, and one undo brings every node back."""
+    monkeypatch.delenv("MPN_DESKTOP", raising=False)
+    monkeypatch.delenv("MPN_SESSION_TOKEN", raising=False)
+    import importlib
+    import mpnstudio.api.app as appmod
+    importlib.reload(appmod)
+    from fastapi.testclient import TestClient
+    from mpnstudio.store.db import sid
+    s = seed(tmp_path / "web.sqlite", n=BIG + 100)
+    ids = [sid(i) for i in s.ids[:BIG]]
+    s.close()
+    app = appmod.create_app(tmp_path / "web.sqlite")
+    with TestClient(app, client=("127.0.0.1", 5000)) as c:
+        p = c.post("/api/nodes/bulk-preview", json={"ids": ids}).json()
+        assert p["count"] == p["live"] == BIG
+        t = _wait(c, c.post("/api/nodes/bulk-delete", json={"ids": ids}).json())
+        assert t["state"] == "done" and t["result"]["deleted"] == BIG, t
+        assert c.post("/api/nodes/select", json={}).json()["count"] == 100
+        c.post("/api/nodes/bulk-restore", json={"rev": t["result"]["rev"]})
+        assert c.post("/api/nodes/select", json={}).json()["count"] == BIG + 100

@@ -144,6 +144,10 @@ textarea {
   border-color: var(--clay);
   color: #ffb9a6;
 }
+.btn.danger:disabled {
+  border-color: var(--line-soft);
+  color: var(--faint);
+}
 .btn.danger:hover:not(:disabled) {
   background: #2a130c;
   border-color: var(--ember);
@@ -364,5 +368,99 @@ input[type='checkbox'] {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* pages of the model library (the Studio overlay and a project's Model sheet) */
+.libpage .wrap {
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: 24px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.libpage h1 {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 600;
+}
+.libpage h2 {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+}
+.libpage .small {
+  font-size: 12px;
+}
+.libpage table.list {
+  width: 100%;
+  border-collapse: collapse;
+}
+.libpage table.list th {
+  color: var(--muted);
+  font-weight: 400;
+  text-align: left;
+  padding: 0 10px 6px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.libpage table.list td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+.libpage table.list .r {
+  text-align: right;
+}
+.libpage table.list .act {
+  white-space: nowrap;
+  text-align: right;
+}
+.libpage table.list .act > * {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.libpage .rowname {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  color: var(--white);
+}
+.libpage .rowname:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.libpage .anchor {
+  position: relative;
+}
+.libpage .anchor .menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 5;
+}
+.libpage .bar {
+  height: 4px;
+  background: var(--line-soft);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.libpage .bar > i {
+  display: block;
+  height: 100%;
+  background: var(--white);
+}
+@media (max-width: 760px) {
+  .libpage .wrap {
+    padding: 16px 12px 32px;
+  }
+  .libpage table.list .hide-narrow {
+    display: none;
   }
 }

@@ -112,6 +112,7 @@ class AppState {
   board = $state.raw<BoardData | null>(null);
   boardError = $state<string | null>(null);
   mpns = $state.raw<Mpn[]>([]);
+  mpnsLoaded = $state(false);
   modelName = $state('N10K');
   /** head revision of the model; panels re-read when it changes */
   head = $state(0);
@@ -161,6 +162,7 @@ class AppState {
   async loadMpns() {
     try {
       this.mpns = (await get<{ mpns: Mpn[] }>('api/mpns')).mpns;
+      this.mpnsLoaded = true;
     } catch {
       /* the library panel shows its own error */
     }

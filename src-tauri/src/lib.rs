@@ -18,6 +18,7 @@ use std::{
 use serde::Serialize;
 use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 struct Backend {
     child: Mutex<Option<Child>>,
@@ -298,6 +299,43 @@ fn cli_passthrough() {
     }
 }
 
+/// A size saved on a larger monitor must not leave the window bigger than the one it opens on now: shrink it to fit
+/// and centre it. The saved size is read from the window-state file because restoring it is applied asynchronously,
+/// so the window does not report it yet; the resize below is queued after the restore and wins.
+fn fit_on_screen(app: &tauri::AppHandle) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    let saved = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .and_then(|d| std::fs::read_to_string(d.join(".window-state.json")).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| {
+            let m = v.get("main")?;
+            if m.get("maximized").and_then(|x| x.as_bool()).unwrap_or(false) || m.get("fullscreen").and_then(|x| x.as_bool()).unwrap_or(false) {
+                return None;
+            }
+            Some((m.get("width")?.as_u64()? as u32, m.get("height")?.as_u64()? as u32))
+        });
+    let Some((sw, sh)) = saved else { return };
+    let mon = match w.current_monitor() {
+        Ok(Some(m)) => Some(m),
+        _ => w.primary_monitor().ok().flatten(),
+    };
+    let Some(m) = mon else { return };
+    let (mw, mh) = (m.size().width, m.size().height);
+    if sw <= mw && sh <= mh {
+        return;
+    }
+    // leave room for the title bar and panels the window manager adds
+    let width = sw.min(mw * 95 / 100).max(1);
+    let height = sh.min(mh * 90 / 100).max(1);
+    let _ = w.set_size(tauri::PhysicalSize::new(width, height));
+    // centre on that monitor; center() would use the size the window has not taken yet
+    let p = m.position();
+    let _ = w.set_position(tauri::PhysicalPosition::new(p.x + ((mw - width) / 2) as i32, p.y + ((mh - height) / 2) as i32));
+}
+
 pub fn run() {
     cli_passthrough();
     // WebKitGTK's DMABUF renderer is a known source of blank windows and web-process crashes on NVIDIA/Wayland.
@@ -318,7 +356,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // the main window's saved size and position are restored in setup, before it is fitted to the current monitor
+        .plugin(tauri_plugin_window_state::Builder::default().skip_initial_state("main").build())
         .setup(|app| {
             let backend: Shared = Arc::new(start_backend(app.handle()));
             app.manage(backend);
@@ -334,6 +373,10 @@ pub fn run() {
                     matches!(url.scheme(), "tauri" | "about" | "blob" | "data") || url.host_str() == Some("tauri.localhost")
                 })
                 .build()?;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.restore_state(StateFlags::all());
+            }
+            fit_on_screen(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![take_open_files, backend_info, pick_folder, pick_file, reveal_path, open_external, quit_app, set_window_title])

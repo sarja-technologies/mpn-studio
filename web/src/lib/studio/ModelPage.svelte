@@ -5,7 +5,7 @@
   import { studio, fmtParams, pct, type ModelRow, type TaskView } from './studio.svelte';
   import TestChat from './TestChat.svelte';
 
-  let { id }: { id: string } = $props();
+  let { id, embedded = false }: { id: string; embedded?: boolean } = $props();
   const isFile = $derived(id.startsWith('mpn-'));
   const opened = $derived(studio.data?.opened.find((o) => o.key === id) ?? null);
 
@@ -85,9 +85,11 @@
 </script>
 
 <div class="wrap">
-  <div class="row">
-    <button class="btn quiet back" onclick={() => (studio.model = null)}>Models</button>
-  </div>
+  {#if !embedded}
+    <div class="row">
+      <button class="btn quiet back" onclick={() => (studio.model = null)}>Models</button>
+    </div>
+  {/if}
 
   {#if isFile}
     {#if opened}

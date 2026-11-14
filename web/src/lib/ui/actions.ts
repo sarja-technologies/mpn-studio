@@ -25,3 +25,15 @@ export function clickOutside(node: HTMLElement, fn: () => void | boolean) {
 export function autofocus(node: HTMLElement) {
   queueMicrotask(() => node.focus());
 }
+
+// Ctrl+Enter (Cmd+Enter) submits the form from any field, including a multi-line one.
+export function submitOnCtrlEnter(form: HTMLFormElement) {
+  const on = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  };
+  form.addEventListener('keydown', on);
+  return { destroy: () => form.removeEventListener('keydown', on) };
+}

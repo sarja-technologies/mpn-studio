@@ -14,6 +14,7 @@ Interchange uses the existing portable formats (`yaob-bundle/1`, `yaob-mpn-packa
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import json
@@ -32,8 +33,11 @@ from .. import ARCHITECTURE_NAME, LEGACY_ARCHITECTURE_NAME
 from ..store.schema import SCHEMA_VERSION
 from . import paths
 
-FORMAT = "mpn-studio-project/1"
+FORMAT = "mpn-studio-project/1"           # a project with its own store ("network"); unchanged so MPN Studio 0.3 still opens it
+FORMAT_LINKED = "mpn-studio-project/2"    # a linked network or a fork of one (no store; MPN Studio 0.4 or newer)
 FORMAT_VERSION = 1
+KINDS = ("network", "linked", "fork")
+OVERLAY_FILE = "overlay.sqlite"
 BACKUP_FORMAT = "mpn-studio-backup/1"
 STORE_FILE = "store.sqlite"
 
@@ -85,6 +89,8 @@ def upgrade_manifest(m: dict) -> tuple[dict, list[str]]:
     """Bring a manifest of any earlier shape to FORMAT_VERSION. Returns (manifest, what changed). Never drops unknown keys."""
     changed = []
     m = dict(m)
+    if m.get("format") == FORMAT_LINKED:
+        return m, changed
     if m.get("format") != FORMAT:
         if m.get("format") not in (None, ""):
             raise ProjectError(f"Unsupported project format {m.get('format')!r}.")
@@ -142,6 +148,57 @@ def summarize(db: Path) -> dict:
     return out
 
 
+def kind_of(m: dict) -> str:
+    k = m.get("kind") or "network"
+    return k if k in KINDS else "network"
+
+
+def summarize_overlay(path: Path) -> dict:
+    out = {"bytes": path.stat().st_size if path.exists() else 0}
+    try:
+        c = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            a, e, d = c.execute("SELECT SUM(state='put' AND created=1), SUM(state='put' AND created=0), SUM(state='del' AND created=0) "
+                                "FROM cur_nodes").fetchone()
+            out.update(nodes_added=a or 0, nodes_edited=e or 0, nodes_deleted=d or 0,
+                       head=c.execute("SELECT COALESCE(MAX(rev),0) FROM revisions").fetchone()[0],
+                       versions=c.execute("SELECT COUNT(*) FROM versions").fetchone()[0])
+        finally:
+            c.close()
+    except sqlite3.Error:
+        out["damaged"] = True
+    return out
+
+
+def _dir_bytes(d: Path) -> int:
+    return sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
+
+
+def project_summary(slug: str, m: dict) -> dict:
+    """What the home screen shows for one project. Read straight from the files; never opens a network."""
+    d = project_dir(slug)
+    kind = kind_of(m)
+    base = {"id": slug, "uid": m.get("id"), "name": m.get("name", slug), "description": m.get("description", ""), "kind": kind,
+            "created": m.get("created"), "modified": m.get("modified"), "origin": m.get("origin"),
+            "core": (m.get("references") or {}).get("core")}
+    if kind == "network":
+        return {**base, **summarize(d / STORE_FILE)}
+    net = m.get("network") or {}
+    ident = net.get("identity") or {}
+    out = {**base, "network": {"name": ident.get("name"), "nodes": ident.get("nodes"), "relationships": ident.get("relationships"),
+                               "storage_bytes": ident.get("storage_bytes"), "known": ident.get("known"),
+                               "sources": [{"mode": s.get("mode"), "label": s.get("label"), "target": s.get("target")} for s in net.get("sources") or []]},
+           "nodes": ident.get("nodes"), "bytes": _dir_bytes(d)}
+    if kind == "fork":
+        ov = summarize_overlay(d / (m.get("overlay") or {}).get("file", OVERLAY_FILE))
+        out["changes"] = ov
+        out["head"] = ov.get("head")
+        if ident.get("nodes") is not None:
+            out["nodes"] = ident["nodes"] + ov.get("nodes_added", 0) - ov.get("nodes_deleted", 0)
+        out["base"] = m.get("base_project")
+    return out
+
+
 def list_projects() -> list[dict]:
     out = []
     root = paths.projects_dir()
@@ -152,10 +209,70 @@ def list_projects() -> list[dict]:
         except ValueError:
             out.append({"id": slug, "name": slug, "damaged": True})
             continue
-        s = summarize(d.parent / STORE_FILE)
-        out.append({"id": slug, "name": m.get("name", slug), "description": m.get("description", ""), "created": m.get("created"),
-                    "modified": m.get("modified"), "origin": m.get("origin"), **s})
+        out.append(project_summary(slug, m))
     return sorted(out, key=lambda p: p.get("modified") or "", reverse=True)
+
+
+# ---------------------------------------------------------------------------- linked networks and forks
+def create_linked(name: str, sources: list[dict], identity: dict, description: str = "") -> str:
+    """A project that names a large network and where to read it. Nothing is copied: the folder holds project.json only."""
+    name = (name or "").strip() or identity.get("name") or "Linked network"
+    clean = []
+    for s in sources:
+        if s.get("mode") not in ("local", "remote") or not s.get("target"):
+            raise ProjectError("Each source needs a folder or a network address.")
+        clean.append({"mode": s["mode"], "target": str(s["target"]).strip(), "label": (s.get("label") or "").strip() or None})
+    if not clean:
+        raise ProjectError("Give at least one place to read the network from.")
+    slug = unique_slug(name)
+    d = project_dir(slug)
+    d.mkdir(parents=True)
+    m = {"format": FORMAT_LINKED, "kind": "linked", "id": str(uuid.uuid4()), "slug": slug, "name": name, "description": description,
+         "architecture": ARCHITECTURE_NAME, "created": now(), "modified": now(),
+         "network": {"identity": identity, "sources": clean, "preferred": 0, "protected": True},
+         "origin": {"kind": "linked", "linked": now()}, "references": {"checkpoints": [], "core": None, "encoder": None}}
+    write_manifest(slug, m)
+    return slug
+
+
+def create_fork(base_slug: str, name: str, overlay_from: Path | None = None, upto_rev: int | None = None, origin: dict | None = None) -> str:
+    """An editable fork of a linked network: the base is referenced, never copied; edits go to overlay.sqlite."""
+    from ..workspace.overlay import Overlay
+    bm = read_manifest(base_slug)
+    if kind_of(bm) not in ("linked", "fork"):
+        raise ProjectError("Only linked networks and their forks are forked this way.")
+    name = (name or "").strip()
+    if not name:
+        raise ProjectError("Give the new project a name.")
+    slug = unique_slug(name)
+    d = project_dir(slug)
+    d.mkdir(parents=True)
+    try:
+        net = copy.deepcopy(bm["network"])
+        net["protected"] = False
+        if overlay_from is not None:
+            src = Overlay(overlay_from)
+            try:
+                src.copy_to(d / OVERLAY_FILE, upto_rev)
+            finally:
+                src.close()
+        else:
+            Overlay(d / OVERLAY_FILE, net.get("identity"), create=True).close()
+        root = bm.get("base_project") if kind_of(bm) == "fork" else base_slug
+        m = {"format": FORMAT_LINKED, "kind": "fork", "id": str(uuid.uuid4()), "slug": slug, "name": name, "description": "",
+             "architecture": ARCHITECTURE_NAME, "created": now(), "modified": now(), "network": net, "base_project": root,
+             "overlay": {"file": OVERLAY_FILE}, "origin": origin or {"kind": "fork", "of": base_slug, "of_name": bm.get("name"), "at": now()},
+             "references": {"checkpoints": [], "core": None, "encoder": None}}
+        write_manifest(slug, m)
+    except Exception:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    return slug
+
+
+def overlay_path(slug: str) -> Path:
+    m = read_manifest(slug)
+    return project_dir(slug) / (m.get("overlay") or {}).get("file", OVERLAY_FILE)
 
 
 # ---------------------------------------------------------------------------- create / import
@@ -280,6 +397,12 @@ def export_bundle_dir(store, slug: str, dest: str | Path, name: str | None = Non
 def prepare_open(slug: str) -> dict:
     """Verify a project can be opened; back it up and migrate its manifest first when it is older. Returns the manifest."""
     m = read_manifest(slug)
+    if kind_of(m) != "network":
+        if m.get("format") != FORMAT_LINKED:
+            raise ProjectError(f"Unsupported project format {m.get('format')!r}.")
+        if kind_of(m) == "fork" and not (project_dir(slug) / (m.get("overlay") or {}).get("file", OVERLAY_FILE)).is_file():
+            raise ProjectError("The fork's change file is missing. Restore the project from a backup.", 500)
+        return m
     db = store_path(slug)
     if not db.is_file():
         raise ProjectError("The project's store file is missing. Restore it from a backup.", 500)
@@ -308,19 +431,36 @@ def record_save(slug: str, store) -> dict:
 
 # ---------------------------------------------------------------------------- backup / restore / delete / rename
 def backup(slug: str, reason: str = "manual") -> Path:
-    """One file: <data>/backups/<slug>/<stamp>.mpnbak (tar.gz of project.json, a consistent store copy and a checksum record)."""
+    """One file: <data>/backups/<slug>/<stamp>.mpnbak (tar.gz of project.json, a consistent copy of the project's data file
+    (store or fork change file; a linked network has none) and a checksum record). A linked network's own data is never
+    copied into a backup: it stays where it is and has its own backups."""
     m = read_manifest(slug)
+    kind = kind_of(m)
     out_dir = paths.backups_dir() / slug
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / (time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + ".mpnbak")
     with tempfile.TemporaryDirectory(dir=paths.cache_dir() if paths.cache_dir().exists() else None) as tmp:
-        snap = Path(tmp) / STORE_FILE
-        _copy_store(store_path(slug), snap)
-        meta = {"format": BACKUP_FORMAT, "project": slug, "name": m.get("name"), "created": now(), "reason": reason,
-                "store_sha256": sha256_file(snap), "store_bytes": snap.stat().st_size, "head": summarize(snap).get("head")}
+        files: dict[str, Path] = {}
+        meta = {"format": BACKUP_FORMAT, "project": slug, "name": m.get("name"), "kind": kind, "created": now(), "reason": reason}
+        if kind == "network":
+            snap = Path(tmp) / STORE_FILE
+            _copy_store(store_path(slug), snap)
+            files[STORE_FILE] = snap
+            meta.update(store_sha256=sha256_file(snap), store_bytes=snap.stat().st_size, head=summarize(snap).get("head"))
+        elif kind == "fork":
+            snap = Path(tmp) / OVERLAY_FILE
+            c = sqlite3.connect(overlay_path(slug), timeout=30)
+            try:
+                c.execute("VACUUM INTO ?", (str(snap),))
+            finally:
+                c.close()
+            files[OVERLAY_FILE] = snap
+            meta.update(head=summarize_overlay(snap).get("head"))
+        meta["files"] = {k: sha256_file(v) for k, v in files.items()}
         tmp_out = out.with_suffix(".part")
         with tarfile.open(tmp_out, "w:gz", compresslevel=3) as t:
-            t.add(snap, STORE_FILE)
+            for k, v in files.items():
+                t.add(v, k)
             t.add(project_dir(slug) / "project.json", "project.json")
             data = json.dumps(meta, indent=2).encode()
             ti = tarfile.TarInfo("BACKUP.json")
@@ -333,21 +473,29 @@ def backup(slug: str, reason: str = "manual") -> Path:
 
 
 def verify_backup(path: Path) -> dict:
-    """Read the archive back and check the store against its recorded checksum. Raises ProjectError if anything is off."""
+    """Read the archive back and check every data file against its recorded checksum. Raises ProjectError if anything is off."""
     try:
         with tarfile.open(path, "r:gz") as t:
             names = t.getnames()
-            for need in (STORE_FILE, "project.json", "BACKUP.json"):
+            for need in ("project.json", "BACKUP.json"):
                 if need not in names:
                     raise ProjectError(f"{path.name} is not a valid backup (missing {need}).")
             meta = json.loads(t.extractfile("BACKUP.json").read())
-            h = hashlib.sha256()
-            f = t.extractfile(STORE_FILE)
-            for b in iter(lambda: f.read(1 << 20), b""):
-                h.update(b)
+            want = meta.get("files") or ({STORE_FILE: meta.get("store_sha256")} if meta.get("store_sha256") else None)
+            if want is None:
+                raise ProjectError(f"{path.name} is not a valid backup (no checksums).")
+            got = {}
+            for name in want:
+                if name not in names:
+                    raise ProjectError(f"{path.name} is not a valid backup (missing {name}).")
+                h = hashlib.sha256()
+                f = t.extractfile(name)
+                for b in iter(lambda: f.read(1 << 20), b""):
+                    h.update(b)
+                got[name] = h.hexdigest()
     except (tarfile.TarError, OSError, EOFError, ValueError, zlib.error) as e:
         raise ProjectError(f"{path.name} cannot be read: {e}")
-    if meta.get("format") != BACKUP_FORMAT or h.hexdigest() != meta.get("store_sha256"):
+    if meta.get("format") != BACKUP_FORMAT or got != want:
         raise ProjectError(f"{path.name} failed verification (checksum mismatch).", 500)
     return meta
 
@@ -379,17 +527,19 @@ def restore(backup_file: str | Path, name: str | None = None) -> str:
     slug = unique_slug(nm)
     d = project_dir(slug)
     d.mkdir(parents=True)
+    want = meta.get("files") or {STORE_FILE: meta["store_sha256"]}
     try:
         with tarfile.open(p, "r:gz") as t:
-            for member in (STORE_FILE, "project.json"):
+            for member in (*want, "project.json"):
                 with t.extractfile(member) as src, (d / member).open("wb") as dst:
                     shutil.copyfileobj(src, dst)
         m = read_manifest(slug)
         m.update({"id": str(uuid.uuid4()), "slug": slug, "name": nm})
         m["origin"] = {"kind": "restore", "detail": p.name, "restored": now(), "backup_created": meta.get("created")}
         write_manifest(slug, m)
-        if sha256_file(d / STORE_FILE) != meta["store_sha256"]:
-            raise ProjectError("Restored store does not match the backup checksum.", 500)
+        for f, h in want.items():
+            if sha256_file(d / f) != h:
+                raise ProjectError("Restored data does not match the backup checksum.", 500)
     except Exception:
         shutil.rmtree(d, ignore_errors=True)
         raise

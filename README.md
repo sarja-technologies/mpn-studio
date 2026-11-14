@@ -33,35 +33,57 @@ Get the files from the [Releases page](https://github.com/sarja-technologies/mpn
 
 | File | For |
 |---|---|
-| `mpn-studio_0.3.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
-| `MPN-Studio_0.3.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
-| `mpn-studio_0.3.0_arm64.deb` | Ubuntu on ARM64, including the NVIDIA DGX Spark |
-| `MPN-Studio_0.3.0_aarch64.AppImage` | Other ARM64 Linux with GTK 3 and WebKitGTK 4.1 |
-| `SHA256SUMS-x86_64`, `SHA256SUMS-aarch64` | Checksums |
+| `mpn-studio_0.4.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
+| `MPN-Studio_0.4.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
+| `SHA256SUMS-x86_64` | Checksums |
 
 ```sh
 sha256sum -c SHA256SUMS-x86_64 --ignore-missing
-sudo apt install ./mpn-studio_0.3.0_amd64.deb       # menu entry "MPN Studio"; commands mpn-studio and mpn
+sudo apt install ./mpn-studio_0.4.0_amd64.deb       # menu entry "MPN Studio"; commands mpn-studio and mpn
 # or
-chmod +x MPN-Studio_0.3.0_x86_64.AppImage && ./MPN-Studio_0.3.0_x86_64.AppImage
+chmod +x MPN-Studio_0.4.0_x86_64.AppImage && ./MPN-Studio_0.4.0_x86_64.AppImage
 ```
+
+0.4.0 is built for x86-64 only; for ARM64 machines such as the DGX Spark, use the ARM64 packages of
+[0.3.0](https://github.com/sarja-technologies/mpn-studio/releases/tag/v0.3.0). 0.4 opens 0.3 projects as they are.
 
 The packages include llama.cpp builds for CPU, CUDA (NVIDIA) and, on x86-64, Vulkan, and use the first that finds a
 usable device. The NVIDIA or Vulkan driver must already be installed; without a GPU, models run on the CPU.
 
-Tested: the x86-64 packages on Ubuntu 26.04 with an RTX 4060 Ti (CUDA, Vulkan and CPU); the ARM64 packages on a
-DGX Spark (GB10, Ubuntu 24.04; CUDA and CPU). Other distributions, AMD and Intel GPUs, and other ARM64 machines are
-untested. There is no Windows or macOS build.
+Tested: the x86-64 packages on Ubuntu 26.04 with an RTX 4060 Ti (CUDA and CPU for 0.4; Vulkan was last tested with
+0.3). Other distributions and AMD and Intel GPUs are untested. There is no Windows or macOS build.
+
+## Projects
+
+Everything you make or open is a project, listed on the home screen with what it is, its size and where it is read
+from. Nobody has to know what is inside the folder.
+
+- **Create project**: a blank network you build yourself (add nodes, write what each one knows, connect them), a
+  duplicate of a project you have, or an import of a network, bundle, backup or fork file.
+- **Open project**: a project folder, an `.mpn` model, or a large network that stays where it is: a folder on this
+  computer or the address of the computer that serves it (for example `http://mpn-host.local:8844`).
+- **Save** is automatic: every edit is written to disk as you make it, and the top bar says so. **Undo** and **Redo**
+  work across the whole history. **Versions** names the current state, compares any two states, and opens an old version
+  as a new project. **Export** writes an `.mpn` model, a bundle folder, a backup, or (for a fork) an `.mpnfork` file.
+- **Large networks are never copied.** A network such as Yaob Origin N119M (119 million nodes, 129 GiB) opens as a
+  protected original: read only, searched and browsed a page at a time. **Duplicate to edit** makes a fork in a fraction
+  of a second that stores only your changes (a few hundred kilobytes); the original is never written to.
+
+![The home screen](docs/desktop/acceptance/0.4/home.png)
+![Yaob Origin N119M opened from the server that holds it, as a protected original](docs/desktop/acceptance/0.4/origin.png)
+![A fork of Yaob Origin with Douglas Adams edited; the original is unchanged](docs/desktop/acceptance/0.4/fork-edit.png)
+
+How projects, links and forks are stored: [docs/desktop/PROJECTS.md](docs/desktop/PROJECTS.md).
 
 ## Build a model
 
 1. **Cognitive cores.** Import a GGUF file, or convert a Hugging Face model folder (this needs a Python with the
    converter's packages; see Settings, Compute). MPN Studio reads the architecture, size, quantization, context length
    and licence from the file. A core is stored once and shared by every model that uses it.
-2. **Node networks.** Create one, import one (a Yaob release, a bundle folder or a store file), or duplicate, specialise,
-   merge and compare the ones you have. **Edit** opens the network on the board: a visual editor for nodes, relations
-   and MPNs, with search, undo and bulk deletion of any number of nodes in one step.
-3. **Models.** Choose a core and a network (and an embedding model for retrieval, if you have one) and **Build**. The
+2. **Node networks.** A project is a network: the board is a visual editor for nodes, relations and MPNs, with
+   search, undo and bulk deletion of any number of nodes in one step.
+3. **Models.** **Model** in the project's top bar attaches a core (and an embedding model for retrieval, if you have one)
+   and **Build**s it; **More → Model library** lists every core, network and model. The
    build checks that they fit, routes with the network's trained router if it has one and by retrieval if not, starts
    the model and asks it a test question from the network.
 4. **Test.** Chat with the model. Each answer shows the nodes it read and cited, its tool calls, timing and the memory it
@@ -81,32 +103,25 @@ mpn info Model.mpn ; mpn verify Model.mpn
 A `.mpn` file is not a GGUF file and llama.cpp alone cannot run it: the MPN runtime in MPN Studio reads it, gives the
 core to llama.cpp, and does the retrieval over the network itself. See [docs/MPN-FORMAT.md](docs/MPN-FORMAT.md).
 
-## Open an MPN network
-
-The **MPN Network** tab (or File → Open MPN Network…) opens a whole MPN network read only, however large: nothing is
-copied into a project, and every list is read a page at a time.
-
-- **On the local network**: the address of the MPN dashboard on the computer that holds the network, for example
-  `http://mpn-host.local:8844`. MPN Studio's own backend makes the requests, so the window still talks only to this
-  computer.
-- **On this computer**: **Install downloaded pack…** decompresses a downloaded MPN pack (format `mpn-pack/1`: zstd
-  shards with SHA-256 checksums) into a folder you choose, checking every partition. **Open pack folder…** then opens it
-  with no network at all.
+## Large networks
 
 Search titles and aliases (paged), look up a node id or a Wikidata id such as `Q42`, browse by domain, kind and source,
 or show only nodes linked into another domain. The node inspector shows the KTR cells (knowledge, thinking, reasoning),
-provenance with source, licence and attribution, validation, claims, relationships in both directions and a clickable
-neighbourhood graph. Recently opened networks are listed for one click.
+provenance with source, licence and attribution, claims, relationships in both directions with their names, and a
+clickable neighbourhood graph. A linked network can have several sources (a local folder and a server address); MPN
+Studio checks that each one holds the same network and falls back to the next if one is unreachable.
 
-Measured on 13 November 2026 against a 119-million-node network over a 1 Gb/s LAN: search 0.08 to 0.75 s, a node 0.05 s,
-its neighbourhood graph 0.25 s, a browse page 0.07 s. On a local 2.2-million-node pack: search 0.07 s, a node 0.01 s.
+Measured on 14 November 2026 with Yaob Origin N119M (119,176,878 nodes): linking it took 0.09 s and its project folder is
+1.1 KiB; a fork took 0.03 s and 121 KiB after an edit; a search 0.03 to 0.6 s, a node 0.02 s; the backend used under
+500 MiB. With the network unreachable, a project linked to both a server and a local copy kept working from the local
+copy. The Yaob Origin network itself is not part of this release.
 
 ## Measured requirements
 
-| | x86-64 package | ARM64 package |
-|---|---|---|
-| Download (`.deb` / `.AppImage`) | 853 MiB / 867 MiB | 652 MiB / 700 MiB |
-| Installed (`.deb`) | 1.3 GiB | 0.9 GiB |
+| | x86-64 package |
+|---|---|
+| Download (`.deb` / `.AppImage`) | 853 MiB / 867 MiB |
+| Installed (`.deb`) | 1.3 GiB |
 
 Most of that is NVIDIA's CUDA libraries. What a model needs depends on its core. Measured while answering:
 
@@ -124,8 +139,8 @@ again in free disk space the first time it runs (the core is extracted once, the
 
 The window only loads its own bundled interface. Fonts and scripts are bundled, and there is no account, telemetry or
 licence check. The backend and every running model listen on `127.0.0.1` on random ports and answer only requests that
-carry a per-launch token or the model's key. `mpn run` serves beyond this computer only with `--host` and an API key. The one exception you choose yourself: Open MPN
-Network's "On the local network" connects the backend to the address you type.
+carry a per-launch token or the model's key. `mpn run` serves beyond this computer only with `--host` and an API key.
+The one exception you choose yourself: a project linked to a network address connects the backend to that address.
 `scripts/offline-acceptance.sh` runs the installed app in a network namespace with only loopback and records every
 `connect()` it makes. A Complete `.mpn` file was run with no network at all (`bwrap --unshare-net`) on an empty library.
 

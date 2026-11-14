@@ -105,13 +105,16 @@
     }
     busy = false;
   }
+  const pname = $derived(desk.project?.name ?? app.modelName);
+  const isYaob = $derived(/^yaob\b/i.test(pname));
 </script>
 
 <div class="lib">
-  <div class="model" data-brand>
-    <img src="brand/yaob/yaob-wordmark-cream.svg" width="104" height="47" alt="Yaob" />
+  <div class="model" data-brand={isYaob || undefined}>
+    <!-- the Yaob wordmark belongs only to Yaob networks, never to a project someone made -->
+    {#if isYaob}<img src="brand/yaob/yaob-wordmark-cream.svg" width="104" height="47" alt="Yaob" />{/if}
     <div class="cfg">
-      <span class="cfgname">{(desk.project?.name ?? app.modelName).replace(/^yaob\s+/i, '')}</span>
+      <span class="cfgname">{isYaob ? pname.replace(/^yaob\s+/i, '') : pname}</span>
       {#if total != null}<span class="muted num">{plural(total, 'node')}, {plural(app.mpns.length, 'MPN')}</span>{/if}
     </div>
   </div>
@@ -123,7 +126,7 @@
   {#if app.mpns.length && !anyTrained}<p class="muted note">No MPN has trained state yet.</p>{/if}
 
   {#if !app.mpns.length}
-    <p class="muted note">{app.offline ? 'The MPN list could not be loaded.' : 'Loading MPNs'}</p>
+    <p class="muted note">{app.offline ? 'The MPN list could not be loaded.' : app.mpnsLoaded ? 'No MPNs yet. An MPN groups related nodes into one module.' : 'Loading MPNs'}</p>
   {:else if !shown.length}
     <p class="muted note">No MPN name contains “{filter.trim()}”.</p>
   {/if}
@@ -201,7 +204,11 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 12px 12px 10px 6px;
+    padding: 12px 12px 10px 12px;
+  }
+  /* the wordmark's own side bearing already provides the inset */
+  .model:has(img) {
+    padding-left: 6px;
   }
   .model img {
     display: block;

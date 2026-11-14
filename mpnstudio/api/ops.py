@@ -388,9 +388,13 @@ def place_mpn_region(store: Store, mpn_id: int) -> None:
     """Give a new, empty MPN a region beside the existing ones so it can be seen and dropped into."""
     if store.q1("SELECT 1 FROM regions WHERE board_id=? AND kind='mpn' AND ref_id=?", (BOARD, mpn_id)):
         return
-    b = layout.bounds(store, BOARD)
     r = 220.0
-    store.conn().execute("INSERT INTO regions VALUES(?,?,?,?,?,?)", (BOARD, "mpn", mpn_id, b[2] + r + 80, (b[1] + b[3]) / 2, r))
+    if not store.q1("SELECT 1 FROM regions WHERE board_id=? AND kind='mpn'", (BOARD,)):
+        cx, cy = 0.0, 0.0              # the first region of an empty board sits where a new board looks (its centre)
+    else:
+        b = layout.bounds(store, BOARD)
+        cx, cy = b[2] + r + 80, (b[1] + b[3]) / 2
+    store.conn().execute("INSERT INTO regions VALUES(?,?,?,?,?,?)", (BOARD, "mpn", mpn_id, cx, cy, r))
 
 
 # ---------------------------------------------------------------------------- schemas

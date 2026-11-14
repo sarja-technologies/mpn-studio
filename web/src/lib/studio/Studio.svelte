@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { desk } from '../desktop.svelte';
+  import { work } from '../work/work.svelte';
   import { studio, type Tab } from './studio.svelte';
   import Models from './Models.svelte';
   import ModelPage from './ModelPage.svelte';
@@ -28,7 +29,7 @@
     studio.model = null;
   }
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && editing && !document.querySelector('dialog[open]')) desk.home = false;
+    if (e.key === 'Escape' && !document.querySelector('dialog[open]')) work.library = false;
   }
 </script>
 
@@ -46,13 +47,11 @@
       {/each}
     </nav>
     <span class="grow"></span>
-    {#if editing}
-      <button class="btn" title="Back to the network editor (Esc)" onclick={() => (desk.home = false)}>Edit {editing.name}</button>
-    {/if}
+    <button class="btn" title="Close the model library (Esc)" onclick={() => (work.library = false)}>{editing && !desk.home ? `Back to ${editing.name}` : 'Close'}</button>
     <button class="btn quiet" onclick={() => (desk.settings = 'storage')}>Settings</button>
   </header>
 
-  <main class="scroll" class:fill={studio.tab === 'mpnnet'}>
+  <main class="scroll libpage" class:fill={studio.tab === 'mpnnet'}>
     {#if studio.tab === 'mpnnet'}
       <Explorer />
     {:else if studio.error && !studio.data}
@@ -140,98 +139,8 @@
     flex: 1 1 auto;
     min-height: 0;
   }
-  main :global(.wrap) {
-    width: min(1080px, 100%);
-    margin: 0 auto;
-    padding: 24px 24px 40px;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-  main :global(h1) {
-    font-size: 20px;
-    line-height: 26px;
-    font-weight: 600;
-  }
-  main :global(h2) {
-    font-size: 15px;
-    line-height: 20px;
-    font-weight: 500;
-  }
-  main :global(.small) {
-    font-size: 12px;
-  }
-  main :global(table.list) {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  main :global(table.list th) {
-    color: var(--muted);
-    font-weight: 400;
-    text-align: left;
-    padding: 0 10px 6px;
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-  }
-  main :global(table.list td) {
-    padding: 9px 10px;
-    border-bottom: 1px solid var(--line-soft);
-    vertical-align: middle;
-  }
-  main :global(table.list .r) {
-    text-align: right;
-  }
-  main :global(table.list .act) {
-    white-space: nowrap;
-    text-align: right;
-  }
-  main :global(table.list .act > *) {
-    display: inline-flex;
-    vertical-align: middle;
-    margin-left: 6px;
-  }
-  main :global(.rowname) {
-    border: 0;
-    background: none;
-    padding: 0;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    text-align: left;
-    color: var(--white);
-  }
-  main :global(.rowname:hover) {
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-  main :global(.anchor) {
-    position: relative;
-  }
-  main :global(.anchor .menu) {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    z-index: 5;
-  }
-  main :global(.bar) {
-    height: 4px;
-    background: var(--line-soft);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  main :global(.bar > i) {
-    display: block;
-    height: 100%;
-    background: var(--white);
-  }
   @media (max-width: 760px) {
     .name {
-      display: none;
-    }
-    main :global(.wrap) {
-      padding: 16px 12px 32px;
-    }
-    main :global(table.list .hide-narrow) {
       display: none;
     }
   }

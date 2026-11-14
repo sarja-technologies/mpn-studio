@@ -22,6 +22,8 @@ DEFAULTS: dict = {
     },
     # MPN networks opened read-only (Open MPN Network): {mode: remote|local, target: URL or folder, name, opened}
     "networks": {"recent": []},
+    # Projects in the order they were last opened: [{id, opened}]
+    "recent_projects": [],
 }
 
 

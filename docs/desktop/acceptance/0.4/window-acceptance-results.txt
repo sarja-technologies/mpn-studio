@@ -1,0 +1,18 @@
+PASS  window opened
+PASS  backend answers
+PASS  blank project created and open
+PASS  two nodes created through the window
+PASS  version saved through the window
+PASS  reopened project still has its nodes
+PASS  N10K project opened (Yaob N10K)
+PASS  Origin linked project created
+PASS  Origin reports 119M nodes
+PASS  search answers in the window session
+PASS  fork project created and open
+PASS  fork node carries the edit
+PASS  original on the server is unchanged
+PASS  fork folder is small (<2 MiB)
+PASS  app exits on Ctrl+Q
+PASS  four projects after relaunch
+PASS  app exits on Ctrl+Q
+PASS=17 FAIL=0

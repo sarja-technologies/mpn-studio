@@ -15,7 +15,8 @@
   const keys: [string, string][] = [
     ['Ctrl+N / Ctrl+O', 'New or open project'],
     ['Ctrl+S', 'Save'],
-    ['Ctrl+Shift+E', 'Export project as bundle'],
+    ['Ctrl+Shift+E', 'Export the project'],
+    ['Ctrl+Enter', 'Finish the form you are typing in (new node, edit node)'],
     ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo an edit'],
     ['Ctrl+K or /', 'Find a node'],
     ['Ctrl+,', 'Settings'],

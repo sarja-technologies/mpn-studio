@@ -1,6 +1,40 @@
-# Acceptance evidence (2026-11-12/13, extended 2026-11-13)
+# Acceptance evidence
 
-## 1. Offline end-to-end test of the installed application
+## MPN Studio 0.4.0 (14 November 2026)
+
+Tests A to J of the 0.4 brief, on Ubuntu 26.04 x86-64 (i9-11900F, RTX 4060 Ti). "Window" means the packaged AppImage
+driven in a real X11 window by `scripts/window-acceptance.sh` (synthesized mouse and keyboard, every step checked
+through the backend API); its final run on the release AppImage: **17 passed, 0 failed**
+([results](acceptance/0.4/window-acceptance-results.txt), screenshots in [acceptance/0.4](acceptance/0.4)).
+"Dev" means the same interface in a browser against the source backend (Playwright).
+
+| Test | What was done | Result |
+|---|---|---|
+| A, new user | Window: Create project, blank, "Window Plants"; two nodes with a statement each (New node, keyboard); Save version; Close project; reopen from the home screen. Dev: three nodes, Connect by dragging between two nodes, Save, close, reopen. | Window: nodes found after reopening. Dev: 3 nodes and 1 relationship after reopening. |
+| B, Yaob N10K | Window: the 0.3 Yaob N10K project, copied unchanged into a fresh profile, opened from its card. | Opens as it is (10,155 nodes, no migration). |
+| C, Yaob Origin | Window: Open project, network address of the computer serving Origin, Check, Link; search "Douglas Adams"; open the first result. Also linked in the real profile with two sources, the local pack first and the server second. | 119,176,878 nodes reported by the server, 119,176,842 by the published pack. Linking took 0.09 s; the project folder is 1.3 KiB. Local pack: search 0.06 to 0.60 s, `Q42` lookup under 0.01 s, a node 0.02 s, a browse page of 50 nodes 0.02 s. Relationships carry their names. |
+| D, fork | Window: Duplicate to edit, "Window Fork"; edit Douglas Adams's summary; Ctrl+Enter. | The fork answers with the edit; the server's node is unchanged; the fork folder is 176 KiB. After reading from the local pack, its part files had the same sizes and modification times as before. |
+| E, versions | Window: Save version "Two plant facts", compare the start with now. Dev: open a version as a new project; compare a fork with the original. | "2 added: Photosynthesis, Chlorophyll". The version opened as a new project with 3 nodes and 1 relationship. Fork compare: "1 edited". |
+| F, export | Dev: attach a GGUF core (Qwen2.5 0.5B), build, export a Complete `.mpn` (469 MiB). Then `mpn verify` and `mpn run --ask` with the `mpn` from the release .deb. | All checksums verified (5 s). "Where does photosynthesis happen in a plant?" was answered from the Leaf and Chlorophyll nodes at 250 tokens/s (CUDA). "What is chlorophyll?" got the runtime's instruction text back instead of an answer, every time: a limit of the 0.5B core with the runtime's prompt, not new in 0.4. |
+| G, offline | Source backend in `bwrap --unshare-net` (loopback only). | The server was unreachable; the linked Origin fell back to the local pack (search 0.4 s, node 0.02 s); fork edits readable; a blank project kept 2 nodes and 1 relationship across a restart. |
+| H, scale | Every list is paged (search 25, browse 50 per page); the graph shows one neighbourhood. | Backend 303 MiB resident with Origin open from the local pack; under 500 MiB in every run. |
+| I, compatibility | Released `Yaob-Next-N10K-C4B-0.2.0.mpn` (6.6 GB) verified and run with the 0.4 code; a 0.3 project opened in 0.4. | Verified in 12 s; answered at 31 tokens/s. |
+| J, real window | The packaged app, end to end, as above; also at 1024x700. | 17/17. The graph refits when the window shrinks. |
+
+Defects found by these runs and fixed before release: the first node of a blank project was placed outside its group; a
+relationship removed in a fork was not cancelled; concurrent requests could deadlock a fork's change file; relationship
+names showed Wikidata property ids; the Yaob wordmark was shown on projects people made; the graph did not refit when
+the window shrank; a window size saved on a larger monitor overflowed a smaller one.
+
+Not verified for 0.4: the ARM64 build (not built), the Vulkan runtime, the native GTK folder dialog driven from the
+window (folders were linked by typing a path or an address), answer quality beyond the 0.5B test core (one of its two
+test answers repeated tool text).
+
+---
+
+## Earlier: 0.1 to 0.3 (2026-11-12/13)
+
+### 1. Offline end-to-end test of the installed application
 
 `scripts/offline-acceptance.sh` runs the **installed** app (`/usr/bin/mpn-studio` from the .deb, and separately the
 AppImage) inside a private network namespace (`bwrap --unshare-net`): the only interface is loopback, so a LAN compute
@@ -36,7 +70,7 @@ earlier run of the previous build.
 
 "Spark unreachable" is covered by the same run: it cannot be reached from the namespace, and the app never needed it.
 
-## 2. Original whiteboard test suite, before vs after
+### 2. Original whiteboard test suite, before vs after
 
 The 20 original Playwright tests (system Chrome) were run against the **unmodified baseline commit** and against the
 desktop backend, both on the same real N10K snapshot: **identical results, 12 pass / 8 fail, the same 8** (tests 2, 3, 7,
@@ -44,7 +78,7 @@ desktop backend, both on the same real N10K snapshot: **identical results, 12 pa
 layout positions) or need a running job worker; they fail on the original with real data too. **No regression
 from the migration.** They remain as a harness (`web/e2e`) and are not claimed as passing here.
 
-## 3. Other checks
+### 3. Other checks
 
 * `pytest`: 71 pass, 29 skipped (need torch): 16 new tests cover XDG paths, project lifecycle, WAL-safe import,
   backup/verify/restore (tampering detected), manifest migration with backup-first, newer-schema refusal, checkpoint
@@ -60,7 +94,7 @@ from the migration.** They remain as a harness (`web/e2e`) and are not claimed a
   widths could squeeze the board to zero, and a project that carries dock widths saved on a larger screen (the migrated network) left the board only 420 px: restored docks now leave it at least half the window; the library header said "N10K" for every project; "1 nodes, 1 MPNs";
   jobs/resume could queue work that nothing would run.
 
-## 4. What is still incomplete
+### 4. What was still incomplete in 0.3
 
 * **Local inference and local training need your own Python environment and weights.** The packaged app contains no
   torch and no weights. *Settings, Compute* can start the Yaob runtime (and, with a usable CUDA GPU, the job worker)

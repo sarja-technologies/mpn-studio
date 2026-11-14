@@ -3,6 +3,7 @@
   import { app } from '../state.svelte';
   import { get, post, del, errText, ApiError, plural, human, type SchemaEntry } from '../api';
   import Modal from './Modal.svelte';
+  import { submitOnCtrlEnter } from './actions';
   import { studio, type TaskView } from '../studio/studio.svelte';
 
   const d = $derived(app.dialog);
@@ -10,6 +11,8 @@
 
   // ---------------------------------------------------------------- new node
   let nn = $state({ title: '', type: 'knowledge', schema: '3cn@1', statement: '', mpns: [''] as string[] });
+  /** a project without any MPN: the first node also creates the first MPN, under this name */
+  let firstMpn = $state('General');
   let schemas = $state.raw<SchemaEntry[]>([]);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -29,7 +32,7 @@
   });
   function openNewNode(d: typeof app.dialog) {
     if (d?.kind === 'newNode') {
-      nn = { title: '', type: 'knowledge', schema: nn.schema, statement: '', mpns: [regionAt(d.x, d.y)] };
+      nn = { title: '', type: 'knowledge', schema: nn.schema, statement: '', mpns: [regionAt(d.x, d.y) || (app.mpns.length === 1 ? app.mpns[0].id : '')] };
       error = null;
       problems = [];
       get<{ schemas: SchemaEntry[] }>('api/schemas')
@@ -43,11 +46,16 @@
   async function createNode() {
     if (d?.kind !== 'newNode') return;
     const [sid, sv] = nn.schema.split('@');
-    const mems = [...new Set(nn.mpns.filter(Boolean))].map((mpn_id) => ({ mpn_id }));
     busy = true;
     error = null;
     problems = [];
     try {
+      if (!app.mpns.length) {
+        const m = await post('api/mpns', { name: firstMpn.trim() || 'General', description: '' });
+        await app.loadMpns();
+        nn.mpns = [m.mpn.id];
+      }
+      const mems = [...new Set(nn.mpns.filter(Boolean))].map((mpn_id) => ({ mpn_id }));
       const body: any = {
         title: nn.title.trim(),
         type: nn.type,
@@ -225,7 +233,7 @@
 
 {#if d?.kind === 'newNode'}
   <Modal title="New node" onclose={close} width={460}>
-    <form onsubmit={(e) => (e.preventDefault(), createNode())}>
+    <form onsubmit={(e) => (e.preventDefault(), createNode())} use:submitOnCtrlEnter>
       <div>
         <label class="lbl" for="nn-title">Title</label>
         <!-- svelte-ignore a11y_autofocus -->
@@ -251,24 +259,32 @@
         <label class="lbl" for="nn-st">First statement</label>
         <textarea id="nn-st" class="field" rows="2" bind:value={nn.statement} placeholder="One sentence this node states"></textarea>
       </div>
-      <fieldset>
-        <legend class="lbl">Member of</legend>
-        {#each nn.mpns as _, i (i)}
-          <div class="row">
-            <select class="field" aria-label="MPN {i + 1}" bind:value={nn.mpns[i]} required={i === 0}>
-              <option value="" disabled>Choose an MPN</option>
-              {#each app.mpns as m (m.id)}<option value={m.id}>{m.name}{i === 0 ? '' : ' (shared)'}</option>{/each}
-            </select>
-            {#if nn.mpns.length > 1}<button type="button" class="btn" onclick={() => (nn.mpns = nn.mpns.filter((_, j) => j !== i))}>Remove</button>{/if}
-          </div>
-        {/each}
-        <button type="button" class="btn add" onclick={() => (nn.mpns = [...nn.mpns, ''])}>Add another MPN</button>
-      </fieldset>
+      {#if app.mpns.length}
+        <fieldset>
+          <legend class="lbl">Member of</legend>
+          {#each nn.mpns as _, i (i)}
+            <div class="row">
+              <select class="field" aria-label="MPN {i + 1}" bind:value={nn.mpns[i]} required={i === 0}>
+                <option value="" disabled>Choose an MPN</option>
+                {#each app.mpns as m (m.id)}<option value={m.id}>{m.name}{i === 0 ? '' : ' (shared)'}</option>{/each}
+              </select>
+              {#if nn.mpns.length > 1}<button type="button" class="btn" onclick={() => (nn.mpns = nn.mpns.filter((_, j) => j !== i))}>Remove</button>{/if}
+            </div>
+          {/each}
+          <button type="button" class="btn add" onclick={() => (nn.mpns = [...nn.mpns, ''])}>Add another MPN</button>
+        </fieldset>
+      {:else}
+        <div>
+          <label class="lbl" for="nn-first">Group it in</label>
+          <input id="nn-first" class="field" bind:value={firstMpn} maxlength="120" />
+          <p class="muted hint">Nodes live in groups called MPNs (modules). This is the project's first one; you can rename it later.</p>
+        </div>
+      {/if}
       {#if error}<p class="error-line">{error}</p>{/if}
       {#each problems as p}<p class="problem">{p}</p>{/each}
       <div class="actions">
         <button type="button" class="btn" onclick={close}>Cancel</button>
-        <button type="submit" class="btn primary" disabled={busy || !nn.title.trim() || !nn.mpns[0]}>Create node</button>
+        <button type="submit" class="btn primary" disabled={busy || !nn.title.trim() || (app.mpns.length > 0 && !nn.mpns[0])}>Create node</button>
       </div>
     </form>
   </Modal>
@@ -345,7 +361,7 @@
       <div class="pair">
         <span class="ellipsis strong">{flip ? d.dstTitle : d.srcTitle}</span>
         <select class="field mono" aria-label="Relation type" bind:value={rel}>
-          {#each types as t (t)}<option value={t}>{t}</option>{/each}
+          {#each types as t (t)}<option value={t}>{human(t)}</option>{/each}
           {#if !types.length}<option value={rel}>{rel}</option>{/if}
         </select>
         <span class="ellipsis strong">{flip ? d.srcTitle : d.dstTitle}</span>
@@ -419,5 +435,9 @@
     display: grid;
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+  .hint {
+    margin-top: 6px;
+    line-height: 18px;
   }
 </style>

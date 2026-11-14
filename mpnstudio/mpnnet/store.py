@@ -1,4 +1,4 @@
-# Vendored from the Yaob repository (mpn14b/store.py at f8bd650, 2026-11-13). Read-only use: MPN Studio
+# Vendored from the Yaob repository (mpn14b/store.py at f8bd650, 2026-11-13; MPN Studio adds the optional parallel search pool). Read-only use: MPN Studio
 # opens MPN network packs with it. Keep in step with the source; the mpn-network/1 JSON must stay identical.
 """Partitioned, disk-backed node store.
 
@@ -309,14 +309,20 @@ class Store:
             return []
         hits = []
         kind_ids = {S.KIND_ID[k] for k in kinds} if kinds else None
-        for i in (partitions if partitions is not None else range(self.P)):
+
+        def one(i):
             c = self.conn(i)
             try:
-                rows = c.execute(f"SELECT n.{self.COLS.replace(',', ',n.')}, f.rank FROM (SELECT rowid, rank FROM fts "
+                return c.execute(f"SELECT n.{self.COLS.replace(',', ',n.')}, f.rank FROM (SELECT rowid, rank FROM fts "
                                  f"WHERE fts MATCH ? ORDER BY rank LIMIT ?) f JOIN nodes n ON n.rid=f.rowid "
                                  f"WHERE n.status=1", (fq, limit * 2)).fetchall()
             except sqlite3.OperationalError:
-                continue
+                return []
+        parts = list(partitions if partitions is not None else range(self.P))
+        # MPN Studio addition (not in the Yaob source): a reader may set `pool` (a small ThreadPoolExecutor) to query
+        # the partitions in parallel; SQLite releases the GIL while it works. Results are identical either way.
+        pool = getattr(self, "pool", None)
+        for rows in (pool.map(one, parts) if pool is not None else map(one, parts)):
             for r in rows:
                 if kind_ids and r[2] not in kind_ids:
                     continue
