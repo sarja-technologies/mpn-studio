@@ -16,6 +16,7 @@ import copy
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..mpnnet import schema as S
@@ -78,6 +79,10 @@ def identify(conn) -> dict:
     return out
 
 
+# the cluster of a fork's own new nodes, which belong to no dataset
+FORK_DATASET = "_fork"
+
+
 class Workspace:
     """The open linked or forked network. Thread-safe for reads; edits are serialised by the overlay."""
 
@@ -94,6 +99,9 @@ class Workspace:
         if self.kind == "fork":
             self.overlay = Overlay(project_dir / (manifest.get("overlay") or {}).get("file", "overlay.sqlite"))
         self.last_ms: float | None = None
+        # reads several nodes' relationships at once (links among the nodes on the canvas); kept for the project's life so
+        # each worker keeps its read-only partition handles
+        self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ws-links")
 
     # ------------------------------------------------------------------ sources
     @property
@@ -152,6 +160,7 @@ class Workspace:
             c.close()
         if self.overlay:
             self.overlay.close()
+        self._pool.shutdown(wait=False, cancel_futures=True)
 
     def need(self):
         c = self.conn
@@ -228,6 +237,8 @@ class Workspace:
         return {**base, "results": merged}
 
     def browse(self, params: dict) -> dict:
+        if params.get("dataset") == FORK_DATASET:
+            return self._browse_own(params)
         base = self._base("browse", None, params)
         if not self.overlay:
             return base
@@ -235,8 +246,23 @@ class Workspace:
         states = self.overlay.node_states([r["id"] for r in res])
         merged = [c for c in (self._apply_card(r, states) for r in res) if c]
         if not params.get("cursor"):
-            merged = [_card(d) | {"edited": True} for d in self.overlay.added_nodes(params.get("domain"), 50)] + merged
+            kind = params.get("kind")
+            own = [d for d in self.overlay.added_nodes(params.get("domain"), 50) if not kind or d.get("kind") == kind]
+            # nodes made in the fork carry no dataset: a page filtered by dataset has none of them
+            if not params.get("dataset"):
+                merged = [_card(d) | {"edited": True} for d in own] + merged
         return {**base, "results": merged}
+
+    def _browse_own(self, params: dict) -> dict:
+        """The nodes made in this fork, as their own cluster (they belong to no dataset)."""
+        if not self.overlay:
+            raise NetError("Only a fork has nodes of its own.", 400)
+        kind = params.get("kind")
+        own = [d for d in self.overlay.added_nodes(params.get("domain"), 1000) if not kind or d.get("kind") == kind]
+        off = int(params.get("cursor") or 0) if str(params.get("cursor") or "0").isdigit() else 0
+        lim = max(1, min(int(params.get("limit") or 25), 100))
+        page = own[off:off + lim]
+        return {"results": [_card(d) | {"edited": True} for d in page], "cursor": str(off + lim) if off + lim < len(own) else None}
 
     def _merge_rels(self, nid: str, out: list[dict], inn: list[dict]) -> tuple[list[dict], list[dict]]:
         ov = self.overlay
@@ -327,7 +353,90 @@ class Workspace:
         st, doc = self.overlay.node_state(nid)
         return bool(doc and doc.get("created_in_fork"))
 
+    def clusters(self, domain: str | None = None, kind: str | None = None) -> dict:
+        """What one cluster of the network holds, for drilling down on the canvas: the network's domains, a domain's
+        kinds, or a domain and kind's datasets. Counts come from the stores' count tables (exact, a few rows per
+        partition, never a scan of the nodes). A source that does not report counts inside a domain answers with
+        `exact: false` and no children; the canvas then lists the cluster's nodes. A fork adds its own new nodes."""
+        ov = self.overview()
+        scope = {k: v for k, v in (("domain", domain), ("kind", kind)) if v}
+        if not domain:
+            ch = [{"domain": d["domain"], "nodes": d["nodes"]} for d in ov.get("domains") or [] if d.get("nodes")]
+            return {"scope": scope, "level": "network", "exact": True, "total": ov.get("validated_nodes"), "children": ch}
+        level = "kind" if kind else "domain"
+        try:
+            rows = self.need().facets(domain, kind)["rows"]
+        except NetError as e:
+            if e.status != 501:
+                raise
+            total = None if kind else next((d["nodes"] for d in ov.get("domains") or [] if d["domain"] == domain), None)
+            return {"scope": scope, "level": level, "exact": False, "total": total, "children": [], "note": str(e)}
+        names = {int(d["id"]): d for d in ov.get("datasets") or [] if d.get("id") is not None}
+        if not kind:
+            by: dict[str, int] = {}
+            for r in rows:
+                by[r["kind"]] = by.get(r["kind"], 0) + r["nodes"]
+            if self.overlay:
+                for d in self.overlay.added_nodes(domain, 1000):
+                    by[d.get("kind") or "concept"] = by.get(d.get("kind") or "concept", 0) + 1
+            ch = [{"domain": domain, "kind": k, "nodes": n} for k, n in by.items()]
+        else:
+            ch = [{"domain": domain, "kind": kind, "dataset": names.get(r["dataset"], {}).get("slug", str(r["dataset"])),
+                   "label": names.get(r["dataset"], {}).get("name"), "nodes": r["nodes"]} for r in rows if r["kind"] == kind]
+            if self.overlay:
+                mine = sum(1 for d in self.overlay.added_nodes(domain, 1000) if (d.get("kind") or "concept") == kind)
+                if mine:
+                    ch.append({"domain": domain, "kind": kind, "dataset": FORK_DATASET, "label": "Added in this project", "nodes": mine})
+        ch.sort(key=lambda c: -c["nodes"])
+        return {"scope": scope, "level": level, "exact": True, "total": sum(c["nodes"] for c in ch), "children": ch}
+
+    def links(self, ids: list[str], per_node: int = 30) -> dict:
+        """The relationships among nodes already on the canvas (at most 120 of them): each node's first `per_node`
+        outgoing relationships, kept when the other end is also in the set. One bounded page per node."""
+        ids = [i for i in dict.fromkeys(ids) if i][:120]
+        want = set(ids)
+
+        def one(nid: str) -> list[dict]:
+            try:
+                r = self.relationships(nid, {"direction": "out", "limit": per_node})
+            except NetError:
+                return []
+            return [{"src": nid, "dst": x["node"], "rel": x.get("rel") or x.get("rel_id"), "rel_id": x.get("rel_id"),
+                     "cross_domain": bool(x.get("cross_domain"))}
+                    for x in r.get("results") or [] if x.get("node") in want and x.get("node") != nid]
+
+        return {"edges": [e for part in self._pool.map(one, ids) for e in part]}
+
+    def _with_subject(self, g: dict) -> dict:
+        """A claim is tied to the node it is about by its subject field, not by a relationship. Draw that tie, so a
+        claim opened on the canvas shows what it is about instead of standing alone."""
+        cid = g.get("center")
+        c = next((n for n in g.get("nodes") or [] if n.get("id") == cid), None)
+        if not c or c.get("kind") != "claim":
+            return g
+        try:
+            d = self.node(cid)
+        except NetError:
+            return g
+        subj = (d.get("node") or {}).get("subject")
+        if not subj or not isinstance(subj, str):
+            return g
+        nodes = list(g.get("nodes") or [])
+        if not any(n.get("id") == subj for n in nodes):
+            try:
+                s = self.node(subj)["node"]
+            except NetError:
+                return g
+            subj = s["id"]
+            nodes.append({"id": subj, "title": s.get("title"), "domain": s.get("domain"), "kind": s.get("kind")})
+        sd = next((n.get("domain") for n in nodes if n.get("id") == subj), None)
+        edges = list(g.get("edges") or []) + [{"src": cid, "dst": subj, "rel": "about", "cross_domain": sd != c.get("domain"), "subject": True}]
+        return {**g, "nodes": nodes, "edges": edges}
+
     def graph(self, nid: str, limit: int = 40) -> dict:
+        return self._with_subject(self._graph(nid, limit))
+
+    def _graph(self, nid: str, limit: int = 40) -> dict:
         if not self.overlay:
             return self._base("graph", nid, {"limit": limit})
         nid = self.resolve(nid)

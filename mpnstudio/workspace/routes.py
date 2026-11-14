@@ -332,6 +332,15 @@ def register(app: FastAPI, ctx: dict, get_store: Callable, open_project: Callabl
     def ws_graph(nid: str, limit: int = 40):
         return props.named(ws().graph(_nid(nid), max(4, min(limit, 120))))
 
+    @app.get("/api/ws/clusters")
+    def ws_clusters(domain: str | None = None, kind: str | None = None):
+        return ws().clusters(domain or None, kind or None)
+
+    @app.post("/api/ws/links")
+    def ws_links(body: dict):
+        ids = [_nid(str(x)) for x in (body.get("ids") or [])[:120]]
+        return props.named(ws().links(ids))
+
     # ------------------------------------------------------------------ edits (forks)
     @app.post("/api/ws/nodes")
     def ws_create(body: dict):

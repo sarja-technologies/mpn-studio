@@ -1,18 +1,26 @@
 <script lang="ts">
-  // The centre of the workspace, drawn with Canvas2D. With nothing selected it shows the domain map (one circle per
-  // domain, sized by the square root of its node count); with a node selected, that node's neighbourhood, which grows
-  // by double-clicking neighbours and is capped so the canvas stays bounded.
-  import { onMount } from 'svelte';
-  import { errText, fmtInt, get } from '../api';
+  // The centre of the workspace, drawn with Canvas2D. The network is shown as clusters that open one level at a time:
+  // its domains, a domain's kinds, a kind's datasets, and then the real nodes of that cluster, a page at a time, with the
+  // relationships among them. Every count is the network's own (its count tables); nothing is sampled or invented.
+  // Double-clicking a node opens its neighbourhood, which grows by double-clicking neighbours and is capped so the
+  // canvas stays bounded.
+  import { onMount, untrack } from 'svelte';
+  import { errText, fmtInt, get, post, qs } from '../api';
   import Icon from '../ui/Icon.svelte';
-  import { net, word, type GEdge, type GNode, type Graph } from './net.svelte';
+  import { net, word, type Card, type GEdge, type GNode, type Graph } from './net.svelte';
   import { packDomains, relax, ring, separate, type DomainCircle, type P } from './layout';
 
   let { onadd, onconnect }: { onadd: () => void; onconnect: () => void } = $props();
 
   const CAP = 300;
+  /** nodes on one page of a cluster */
+  const PAGE = 60;
   // ax: the x of the node this one was placed around; its label points away from it
   type N = GNode & { x: number; y: number; gen: number; ax: number };
+  /** a place in the network: everything, a domain, a domain's kind, or one dataset of that kind */
+  type Scope = { domain?: string; kind?: string; dataset?: string; dlabel?: string | null };
+  type Cluster = { key: string; label: string; nodes: number; scope: Scope };
+  type ClusterReply = { level: string; exact: boolean; total: number | null; children: any[]; note?: string };
 
   let wrap: HTMLDivElement;
   let cv: HTMLCanvasElement;
@@ -21,9 +29,21 @@
   let view = { x: 0, y: 0, k: 1 };
   // true while the view is the one fit() chose; a pan or zoom by the person turns it off
   let fitted = false;
+  let fitK = 1;
 
-  let mode = $state<'domains' | 'graph'>('domains');
+  let mode = $state<'map' | 'nodes' | 'graph'>('map');
+  /** where the map or the page of nodes is; in a neighbourhood, where it was opened from */
+  let scope = $state<Scope>({});
+  let clusters: Cluster[] = [];
   let circles: DomainCircle[] = [];
+  const byKey = new Map<string, Cluster>();
+  /** why a cluster lists its nodes directly (a source without counts inside a domain) */
+  let note = $state<string | null>(null);
+  /** the page of nodes shown: where it starts, the starts of the pages before it, and the cluster's size */
+  let pg = $state<{ start: string | null; prev: (string | null)[]; next: string | null; total: number | null; count: number; label: string }>(
+    { start: null, prev: [], next: null, total: null, count: 0, label: '' });
+  /** the last page of nodes, kept to go back to it from a neighbourhood */
+  let saved: { scope: Scope; pg: typeof pg; nodes: N[]; edges: GEdge[]; view: typeof view; note: string | null } | null = null;
   const nodes = new Map<string, N>();
   const edges = new Map<string, GEdge>();
   let rootId: string | null = null;
@@ -32,6 +52,8 @@
   let gErr = $state<string | null>(null);
   let capped = $state(false);
   let shown = $state(0);
+  let linkCount = $state(0);
+  let crumbTitle = $state<string | null>(null);
 
   let hoverNode: string | null = null;
   let hoverEdge: string | null = null;
@@ -71,23 +93,24 @@
     if ((window.devicePixelRatio || 1) !== dpr) return resize();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    if (mode === 'domains') paintDomains(ctx);
+    if (mode === 'map') paintMap(ctx);
     else paintGraph(ctx);
   }
 
-  function paintDomains(c: CanvasRenderingContext2D) {
+  const labelOf = (key: string) => clip(byKey.get(key)?.label ?? key, 34);
+  function paintMap(c: CanvasRenderingContext2D) {
     c.textAlign = 'center';
     for (const d of circles) {
       const s = toScreen(d);
       const r = Math.max(2, d.r * view.k);
       if (s.x + r + 80 < 0 || s.x - r - 80 > W || s.y + r + 40 < 0 || s.y - r - 40 > H) continue;
-      const hot = hoverDomain === d.domain, chosen = net.domain === d.domain;
+      const hot = hoverDomain === d.domain;
       c.beginPath();
       c.arc(s.x, s.y, r, 0, Math.PI * 2);
       c.fillStyle = hot ? '#1c1c1c' : '#111111';
       c.fill();
-      c.lineWidth = chosen ? 2 : 1;
-      c.strokeStyle = chosen ? '#f34b27' : hot ? '#6a6a6a' : '#303030';
+      c.lineWidth = 1;
+      c.strokeStyle = hot ? '#6a6a6a' : '#303030';
       c.stroke();
     }
     // labels after circles; a label under a small circle that would cover another circle or label waits for zoom
@@ -101,7 +124,7 @@
       const d = circles[i];
       const s = scr[i];
       const r = s.r;
-      const name = word(d.domain);
+      const name = labelOf(d.domain);
       // inside the circle when the name fits, at 13px or else 12px
       c.font = FONT_M;
       let inFont = FONT_M;
@@ -113,16 +136,8 @@
       const inside = r >= 22 && Math.max(tw, c.measureText(fmtInt(d.nodes)).width) + 8 <= r * 2;
       if (inside) {
         const bx: [number, number, number, number] = [s.x - tw / 2 - 2, s.y - 14, tw + 4, 34];
-        if (hoverDomain !== d.domain && net.domain !== d.domain && !clear(...bx)) continue;
+        if (hoverDomain !== d.domain && !clear(...bx)) continue;
         boxes.push(bx);
-      } else {
-        c.font = FONT;
-        const w = Math.max(c.measureText(name).width, c.measureText(fmtInt(d.nodes)).width) + 4;
-        const bx: [number, number, number, number] = [s.x - w / 2, s.y + r + 3, w, 30];
-        if (hoverDomain !== d.domain && net.domain !== d.domain && !clear(...bx)) continue;
-        boxes.push(bx);
-      }
-      if (inside) {
         c.font = inFont;
         c.fillStyle = '#f7f7f2';
         c.fillText(name, s.x, s.y - 1);
@@ -132,6 +147,9 @@
       } else {
         c.font = FONT;
         const w = Math.max(c.measureText(name).width, c.measureText(fmtInt(d.nodes)).width) + 8;
+        const bx: [number, number, number, number] = [s.x - w / 2, s.y + r + 3, w, 30];
+        if (hoverDomain !== d.domain && !clear(...bx)) continue;
+        boxes.push(bx);
         c.fillStyle = 'rgba(5,5,5,0.8)';
         c.fillRect(s.x - w / 2, s.y + r + 3, w, 30);
         c.fillStyle = hoverDomain === d.domain ? '#f7f7f2' : '#d8d8d2';
@@ -304,15 +322,13 @@
 
   // ---------------------------------------------------------------- view
   function bounds(): [number, number, number, number] | null {
+    if (mode === 'map') return circleBounds();
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    if (mode === 'domains') return circleBounds();
-    else {
-      for (const n of nodes.values()) {
-        x0 = Math.min(x0, n.x);
-        y0 = Math.min(y0, n.y);
-        x1 = Math.max(x1, n.x);
-        y1 = Math.max(y1, n.y);
-      }
+    for (const n of nodes.values()) {
+      x0 = Math.min(x0, n.x);
+      y0 = Math.min(y0, n.y);
+      x1 = Math.max(x1, n.x);
+      y1 = Math.max(y1, n.y);
     }
     return x0 === Infinity ? null : [x0, y0, x1, y1];
   }
@@ -330,40 +346,286 @@
     const b = bounds();
     if (!b || !W) return;
     // room for the toolbar, the legend and labels to the right of nodes
-    // graph labels run up to ~180px beside their node; a narrow canvas gives them less room
-    const lab = mode === 'graph' ? Math.min(185, W * 0.18) : 40;
+    // node labels run up to ~180px beside their node; a narrow canvas gives them less room
+    const lab = mode !== 'map' ? Math.min(185, W * 0.18) : 40;
     const padL = lab, padR = lab, padT = 60, padB = 44;
     const bw = Math.max(1, b[2] - b[0]), bh = Math.max(1, b[3] - b[1]);
     const k = Math.max(0.08, Math.min(1.4, (W - padL - padR) / bw, (H - padT - padB) / bh));
     view = { k, x: padL + (W - padL - padR - bw * k) / 2 - b[0] * k, y: padT + (H - padT - padB - bh * k) / 2 - b[1] * k };
     fitted = true;
+    fitK = k;
     draw();
   }
+  /** after a change of level, zooming waits a moment before it can change level again */
+  let calm = 0;
   function zoomAt(f: number, at: P = { x: W / 2, y: H / 2 }) {
-    const k = Math.max(0.06, Math.min(4, view.k * f));
-    const w = toWorld(at);
-    view = { k, x: at.x - w.x * k, y: at.y - w.y * k };
-    fitted = false;
-    draw();
+    // the map zooms far enough for any cluster to fill the canvas (and so open)
+    // a map or a page never shrinks below half its fitted size: zooming out further goes up a level, or at the top stops
+    const k = Math.max(mode === 'graph' ? 0.06 : fitK * 0.5, Math.min(mode === 'map' ? 60 : 4, view.k * f));
+    if (k !== view.k) {
+      const w = toWorld(at);
+      view = { k, x: at.x - w.x * k, y: at.y - w.y * k };
+      fitted = false;
+      draw();
+    }
+    if (mode === 'graph' || loading || performance.now() < calm) return;
+    // zooming into a cluster until it fills the canvas opens it; zooming well out of a level goes up one
+    if (f > 1 && mode === 'map') {
+      const key = hitDomain(at);
+      const d = key && circles.find((c) => c.domain === key);
+      if (d && d.r * view.k > 0.42 * Math.min(W, H)) openCluster(key!);
+    } else if (f < 1 && scope.domain && view.k < fitK * 0.55) up();
   }
 
-  // ---------------------------------------------------------------- graph data
-  function measure(d: string) {
-    if (!ctx) return d.length * 7;
+  // ---------------------------------------------------------------- clusters
+  const skey = (s: Scope) => `${s.domain ?? ''}|${s.kind ?? ''}|${s.dataset ?? ''}`;
+  const same = (a: Scope, b: Scope) => skey(a) === skey(b);
+  function parentOf(s: Scope): Scope {
+    if (s.dataset !== undefined) return { domain: s.domain, kind: s.kind };
+    if (s.kind) return { domain: s.domain };
+    return {};
+  }
+  /** cluster replies already read, by place (a few rows each; cleared when the network changes) */
+  const cache = new Map<string, ClusterReply>();
+  /** node counts of the clusters seen, by place, for "61–120 of 499,054" */
+  const totals = new Map<string, number>();
+  /** places with a single cluster inside: opening them goes straight through */
+  const single = new Set<string>();
+  let sv = $state(0);
+
+  async function clustersOf(s: Scope, signal: AbortSignal): Promise<ClusterReply> {
+    if (!s.domain) {
+      const ds = (net.ov?.domains ?? []).filter((d: any) => d.nodes > 0);
+      return { level: 'network', exact: true, total: net.ov?.validated_nodes ?? null, children: ds };
+    }
+    const k = skey(s);
+    const have = cache.get(k);
+    if (have) return have;
+    const r = await get<ClusterReply>(`api/ws/clusters${qs({ domain: s.domain, kind: s.kind })}`, signal);
+    if (cache.size > 64) cache.clear();
+    cache.set(k, r);
+    return r;
+  }
+  function toClusters(r: ClusterReply, s: Scope): Cluster[] {
+    return r.children.map((c: any) => {
+      const sc: Scope = !s.domain ? { domain: c.domain } : !s.kind ? { domain: s.domain, kind: c.kind } : { domain: s.domain, kind: s.kind, dataset: c.dataset, dlabel: c.label };
+      const key = !s.domain ? c.domain : !s.kind ? c.kind : c.dataset;
+      const label = !s.domain ? word(c.domain) : !s.kind ? word(c.kind) : c.label || c.dataset;
+      totals.set(skey(sc), c.nodes);
+      return { key, label, nodes: c.nodes, scope: sc };
+    });
+  }
+
+  let seq = 0;
+  let ctl: AbortController | null = null;
+  function begin() {
+    const my = ++seq;
+    ctl?.abort();
+    ctl = new AbortController();
+    gErr = null;
+    if (net.connecting) net.connecting = null;
+    return { my, signal: ctl.signal };
+  }
+  /** show a place: the clusters inside it, or its nodes when it has no clusters to show; a place with a single cluster
+   * inside is passed through (downwards when opening, upwards when going back) */
+  async function go(target: Scope, dir: 'down' | 'up' = 'down', quiet = false) {
+    const { my, signal } = begin();
+    if (!quiet) loading = target.domain ? 'Reading the cluster…' : null;
+    try {
+      let s = target;
+      for (let hop = 0; hop < 5; hop++) {
+        if (s.dataset !== undefined) return await page(s, null, [], my, signal);
+        const r = await clustersOf(s, signal);
+        if (my !== seq) return;
+        if (!s.domain && !r.children.length) return showMap(s, r);
+        if (!r.exact || !r.children.length) {
+          // a source that does not report what is inside a domain: list the domain's nodes
+          return await page(s, null, [], my, signal, r.note ?? null);
+        }
+        if (r.children.length === 1) {
+          if (!single.has(skey(s))) (single.add(skey(s)), sv++);
+          if (dir === 'up' && s.domain) {
+            s = parentOf(s);
+            continue;
+          }
+          if (dir === 'down') {
+            s = toClusters(r, s)[0].scope;
+            continue;
+          }
+        }
+        return showMap(s, r);
+      }
+    } catch (e) {
+      if (my !== seq || signal.aborted) return;
+      gErr = errText(e);
+      draw();
+    } finally {
+      if (my === seq) loading = null;
+    }
+  }
+  function openCluster(key: string) {
+    const c = byKey.get(key);
+    if (c) go(c.scope, 'down');
+  }
+  function syncFilters(s: Scope) {
+    // the explorer on the left lists what the canvas shows
+    if (net.q) return;
+    if (net.domain !== (s.domain ?? '')) net.domain = s.domain ?? '';
+    if (net.kind !== (s.kind ?? '')) net.kind = s.kind ?? '';
+  }
+  function clearNodes() {
+    nodes.clear();
+    edges.clear();
+    rootId = null;
+    gen = 0;
+    capped = false;
+    hoverNode = hoverEdge = hoverDomain = null;
+  }
+  function showMap(s: Scope, r: ClusterReply) {
+    scope = s;
+    clusters = toClusters(r, s);
+    byKey.clear();
+    for (const c of clusters) byKey.set(c.key, c);
+    note = null;
+    crumbTitle = null;
+    mode = 'map';
+    clearNodes();
+    syncFilters(s);
+    calm = performance.now() + 450;
+    changed();
+    repack();
+  }
+
+  /** one page of a cluster's real nodes, read with the network's own cursor; a cluster spread thinly through a large
+   * network takes a few bounded reads to fill a page */
+  async function page(s: Scope, start: string | null, prev: (string | null)[], my: number, signal: AbortSignal, why: string | null = null) {
+    loading = 'Reading the nodes…';
+    const got: Card[] = [];
+    const seen = new Set<string>();
+    let cur = start, calls = 0;
+    do {
+      const r = await get<any>(`api/ws/browse${qs({ domain: s.domain, kind: s.kind, dataset: s.dataset, cursor: cur, limit: PAGE - got.length })}`, signal);
+      if (my !== seq) return;
+      for (const c of r.results ?? []) if (!seen.has(c.id)) (seen.add(c.id), got.push(c));
+      cur = r.cursor ?? null;
+      calls++;
+    } while (cur && got.length < PAGE && calls < 8);
+    let links: GEdge[] = [];
+    if (got.length > 1) {
+      try {
+        links = (await post<any>('api/ws/links', { ids: got.map((c) => c.id) }, signal)).edges ?? [];
+      } catch (e) {
+        if (signal.aborted) return;
+      }
+      if (my !== seq) return;
+    }
+    clearNodes();
+    // a sunflower: evenly spread, the first nodes in the middle, the same page always in the same places
+    got.forEach((c, i) => {
+      const r = 62 * Math.sqrt(i + 0.5), a = i * 2.399963;
+      nodes.set(c.id, { id: c.id, title: c.title, domain: c.domain, kind: c.kind, edited: c.edited, x: r * Math.cos(a), y: r * Math.sin(a), gen: 0, ax: 0 });
+    });
+    for (const e of links) if (nodes.has(e.src) && nodes.has(e.dst)) edges.set(ek(e), e);
+    scope = s;
+    note = why;
+    pg = { start, prev, next: cur, total: totals.get(skey(s)) ?? (s.domain && !s.kind ? domainTotal(s.domain) : null), count: got.length,
+      label: s.dlabel ?? '' };
+    linkCount = edges.size;
+    crumbTitle = null;
+    mode = 'nodes';
+    syncFilters(s);
+    calm = performance.now() + 450;
+    changed();
+    fit();
+  }
+  const domainTotal = (d: string) => (net.ov?.domains ?? []).find((x: any) => x.domain === d)?.nodes ?? null;
+  async function turn(dir: 1 | -1) {
+    const { my, signal } = begin();
+    const s = scope;
+    try {
+      if (dir === 1) await page(s, pg.next, [...pg.prev, pg.start], my, signal, note);
+      else {
+        const p = [...pg.prev];
+        const st = p.pop() ?? null;
+        await page(s, st, p, my, signal, note);
+      }
+    } catch (e) {
+      if (my === seq && !signal.aborted) gErr = errText(e);
+    } finally {
+      if (my === seq) loading = null;
+    }
+  }
+  function snapshot() {
+    saved = { scope: { ...scope }, pg: { ...pg, prev: [...pg.prev] }, nodes: [...nodes.values()].map((n) => ({ ...n })), edges: [...edges.values()],
+      view: { ...view }, note };
+  }
+  function restore() {
+    if (!saved) return;
+    begin();
+    loading = null;
+    clearNodes();
+    for (const n of saved.nodes) nodes.set(n.id, { ...n });
+    for (const e of saved.edges) edges.set(ek(e), e);
+    scope = saved.scope;
+    pg = saved.pg;
+    note = saved.note;
+    view = saved.view;
+    fitted = false;
+    linkCount = edges.size;
+    crumbTitle = null;
+    mode = 'nodes';
+    syncFilters(scope);
+    calm = performance.now() + 450;
+    changed();
+  }
+  /** one level up: from a neighbourhood back to the page it was opened from (or its node's cluster), from a page or a
+   * map to the place around it */
+  function up() {
+    if (mode === 'graph') {
+      if (saved && same(saved.scope, scope)) return restore();
+      return go(scope, 'down');
+    }
+    if (scope.domain) go(parentOf(scope), 'up');
+  }
+  function toPlace(s: Scope) {
+    // back to the page the neighbourhood was opened from, also through a level with a single cluster inside
+    const back = saved && (same(saved.scope, s) || (saved.scope.dataset !== undefined && single.has(skey(s)) && same(parentOf(saved.scope), s)));
+    if (mode === 'graph' && back) return restore();
+    go(s, 'down');
+  }
+
+  // where you are: Network › domain › kind › dataset (› node); a level with a single cluster inside is not a stop
+  type Crumb = { label: string; at?: Scope };
+  const crumbs = $derived.by<Crumb[]>(() => {
+    void sv;
+    const s = scope;
+    const out: Crumb[] = [{ label: 'Network', at: {} }];
+    if (s.domain) out.push({ label: word(s.domain), at: { domain: s.domain } });
+    if (s.domain && s.kind) out.push({ label: word(s.kind), at: { domain: s.domain, kind: s.kind } });
+    if (s.dataset !== undefined && !single.has(skey({ domain: s.domain, kind: s.kind }))) out.push({ label: s.dlabel || s.dataset, at: { ...s } });
+    if (mode === 'graph') out.push({ label: crumbTitle || 'Untitled' });
+    // the place shown is not a link to itself
+    if (mode !== 'graph') out[out.length - 1].at = undefined;
+    return out;
+  });
+
+  // ---------------------------------------------------------------- map layout
+  function measure(key: string) {
+    if (!ctx) return labelOf(key).length * 7;
     ctx.font = FONT_M;
-    return ctx.measureText(word(d)).width;
+    return ctx.measureText(labelOf(key)).width;
   }
   // the map is packed for the canvas it is shown in, so it reads at its natural size (labels do not scale)
   let packedFor = '';
   function repack() {
-    const doms = net.ov?.domains ?? [];
+    const items = clusters.map((c) => ({ domain: c.key, nodes: c.nodes }));
     const availW = Math.max(200, W - 80), availH = Math.max(160, H - 110);
     // first with room for every label; a small canvas packs the circles tight and shows the labels that fit
     for (const room of [true, false]) {
       let maxR = Math.max(36, Math.min(110, Math.min(availW, availH) * (room ? 0.17 : 0.22)));
       let f = 0;
       for (let i = 0; i < 5; i++) {
-        circles = packDomains(doms, measure, maxR, room, Math.max(0.6, Math.min(2.2, availW / availH)));
+        circles = packDomains(items, measure, maxR, room, Math.max(0.6, Math.min(2.2, availW / availH)));
         const b = circleBounds();
         if (!b) break;
         f = Math.min(availW / (b[2] - b[0]), availH / (b[3] - b[1]));
@@ -373,7 +635,7 @@
       if (f >= 0.85) break;
     }
     packedFor = `${W}x${H}`;
-    if (mode === 'domains') fit();
+    if (mode === 'map') fit();
   }
 
   async function fetchGraph(id: string): Promise<Graph> {
@@ -404,11 +666,11 @@
     });
   }
 
-  let seq = 0;
   async function root(id: string) {
-    const my = ++seq;
+    const fromPage = mode === 'nodes' && nodes.has(id);
+    if (mode === 'nodes') snapshot();
+    const { my } = begin();
     loading = 'Reading the neighbourhood…';
-    gErr = null;
     try {
       const g = await fetchGraph(id);
       if (my !== seq) return;
@@ -422,22 +684,25 @@
       const pos = ring(others.map((n) => n.id), { x: 0, y: 0 }, null);
       for (const n of others) nodes.set(n.id, { ...n, ...pos[n.id], gen: 0, ax: 0 });
       setEdges(g, null);
+      // opened from the explorer or by id: the node's own cluster is where it sits
+      if (!fromPage) scope = centre.domain ? { domain: centre.domain, ...(centre.kind ? { kind: centre.kind } : {}) } : {};
+      crumbTitle = centre.title;
+      note = null;
       mode = 'graph';
       changed();
       fit();
     } catch (e) {
       if (my !== seq) return;
       gErr = errText(e);
-      if (mode === 'graph') draw();
+      draw();
     } finally {
       if (my === seq) loading = null;
     }
   }
   async function expand(id: string, near: string | null = null) {
     if (mode !== 'graph' || !nodes.size) return root(id);
-    const my = ++seq;
+    const { my } = begin();
     loading = 'Reading the neighbourhood…';
-    gErr = null;
     try {
       const g = await fetchGraph(id);
       if (my !== seq) return;
@@ -473,6 +738,12 @@
     }
   }
   async function refresh(ids: string[]) {
+    if (mode === 'nodes') {
+      // a page of nodes: the edited node's new title
+      const d = net.detail?.node;
+      if (d && nodes.has(d.id)) update(d);
+      return changed();
+    }
     if (mode !== 'graph') return;
     const list = (ids.length ? ids : rootId ? [rootId] : []).filter((id) => nodes.has(id));
     for (const id of list) {
@@ -500,7 +771,9 @@
     nodes.delete(id);
     for (const [k, e] of edges) if (e.src === id || e.dst === id) edges.delete(k);
     if (rootId === id) rootId = nodes.keys().next().value ?? null;
-    if (!nodes.size) overview();
+    if (mode === 'nodes') linkCount = edges.size;
+    if (!nodes.size && mode === 'graph') up();
+    else if (!nodes.size && mode === 'nodes') go(scope);
     changed();
   }
   function dropEdge(src: string, dst: string, rel: string) {
@@ -534,24 +807,15 @@
     }
     draw();
   }
+  /** back to the whole network (another project was opened: nothing read before applies) */
   function overview() {
-    seq++;
-    loading = null;
-    gErr = null;
-    mode = 'domains';
-    nodes.clear();
-    edges.clear();
-    rootId = null;
-    capped = false;
+    cache.clear();
+    totals.clear();
+    single.clear();
+    saved = null;
+    clearNodes();
     shown = 0;
-    hoverNode = hoverEdge = null;
-    if (packedFor !== `${W}x${H}`) repack();
-    else fit();
-  }
-  function backToMap() {
-    net.connecting = null;
-    net.select(null);
-    overview();
+    go({});
   }
 
   // ---------------------------------------------------------------- pointer
@@ -610,7 +874,7 @@
     if (e.button !== 0) return;
     cv.focus({ preventScroll: true });
     const p = local(e);
-    const id = mode === 'graph' ? hitNode(p) : null;
+    const id = mode !== 'map' ? hitNode(p) : null;
     drag = { kind: id ? 'node' : 'pan', id: id ?? undefined, start: p, at: p, moved: false, vx: view.x, vy: view.y };
     cv.setPointerCapture(e.pointerId);
   }
@@ -634,7 +898,7 @@
         return;
       }
     }
-    if (mode === 'graph') {
+    if (mode !== 'map') {
       const n = hitNode(p);
       const ed = n ? null : hitEdge(p);
       if (n !== hoverNode || ed !== hoverEdge || net.connecting) {
@@ -652,7 +916,7 @@
       cursor = d ? 'pointer' : 'grab';
     }
   }
-  function up(e: PointerEvent) {
+  function up_(e: PointerEvent) {
     const d = drag;
     drag = null;
     if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId);
@@ -663,9 +927,9 @@
     click(local(e));
   }
   function click(p: P) {
-    if (mode === 'domains') {
+    if (mode === 'map') {
       const d = hitDomain(p);
-      if (d) net.browse(d);
+      if (d) openCluster(d);
       return;
     }
     const id = hitNode(p);
@@ -677,17 +941,16 @@
       }
       return;
     }
-    if (id) {
-      if (id !== net.sel) net.select(id);
-    }
+    if (id && id !== net.sel) net.select(id);
   }
   function dbl(e: MouseEvent) {
-    if (mode !== 'graph' || net.connecting) return;
+    if (mode === 'map' || net.connecting) return;
     const id = hitNode(local(e));
-    if (id) {
-      if (id !== net.sel) net.select(id);
-      expand(id, id);
-    }
+    if (!id) return;
+    if (id !== net.sel) net.select(id);
+    // on a page of nodes: open this node's neighbourhood; in a neighbourhood: grow it
+    if (mode === 'nodes') root(id);
+    else expand(id, id);
   }
   function wheel(e: WheelEvent) {
     e.preventDefault();
@@ -705,18 +968,44 @@
     if (e.key === '+' || e.key === '=') zoomAt(1.25);
     else if (e.key === '-') zoomAt(0.8);
     else if (e.key === '0') fit();
+    else if (e.key === 'Backspace' && !net.connecting) {
+      e.preventDefault();
+      up();
+    }
   }
 
   // ---------------------------------------------------------------- wiring
   $effect(() => {
+    // the network changed (opened, or an edit in a fork): counts are read again
     void net.ov;
-    if (ctx) repack();
+    untrack(() => {
+      cache.clear();
+      if (ctx && mode === 'map') go(scope, 'down', true);
+    });
   });
   $effect(() => {
     void net.sel;
     void net.connecting;
-    void net.domain;
     draw();
+  });
+
+  const fromTo = $derived(pg.count ? `${fmtInt(pg.prev.length * PAGE + 1)}–${fmtInt(pg.prev.length * PAGE + pg.count)}` : '');
+  const legend = $derived.by(() => {
+    if (net.connecting && !net.connecting.dst) return `Click the node to connect “${net.connecting.srcTitle}” to.`;
+    if (mode === 'map') {
+      if (!net.ov) return net.ovErr ? '' : 'Reading the network…';
+      if (!scope.domain) return 'Each circle is a domain, sized by its number of nodes. Click one, or zoom into it, to see what it holds.';
+      if (!scope.kind) return `Each circle is one kind of node in ${word(scope.domain)}. Click one to open it. Zoom out or press Backspace to go back.`;
+      return `Each circle is a dataset these nodes come from. Click one to see its nodes.`;
+    }
+    if (mode === 'nodes') {
+      if (!pg.count) return pg.next ? 'None of these nodes in this stretch of the network. Next reads further.' : 'No nodes here.';
+      const of = pg.total != null ? ` of ${fmtInt(pg.total)}` : '';
+      const rel = linkCount ? `${fmtInt(linkCount)} ${linkCount === 1 ? 'relationship' : 'relationships'} among them.` : 'None of them is related to another.';
+      return `Nodes ${fromTo}${of}. ${rel} Click a node to inspect it, double-click to open its relationships.${note ? ' ' + note : ''}`;
+    }
+    if (nodes.size === 1 && !edges.size) return `“${crumbTitle || 'This node'}” has no relationships stored in this network.`;
+    return `Double-click a node to expand it. Hollow nodes and dashed lines lie in another domain.${capped ? ` Showing the newest ${fmtInt(shown)} nodes.` : ''}`;
   });
 
   onMount(() => {
@@ -725,7 +1014,7 @@
       const first = !W;
       const [w0, h0] = [W, H];
       resize();
-      if (mode === 'domains' && packedFor !== `${W}x${H}`) repack();
+      if (mode === 'map' && packedFor !== `${W}x${H}`) repack();
       else if (first) fit();
       else if ((W !== w0 || H !== h0) && fitted) fit();
       else if (W !== w0 || H !== h0) {
@@ -736,9 +1025,8 @@
     });
     ro.observe(wrap);
     resize();
-    repack();
     document.fonts?.ready.then(() => {
-      repack();
+      if (mode === 'map') repack();
       draw();
     });
     cv.addEventListener('wheel', wheel, { passive: false });
@@ -750,31 +1038,56 @@
       dropEdge,
       has: (id) => nodes.has(id),
       overview,
+      open: (domain) => go({ domain }),
+      up,
       fit,
       mode: () => mode,
     };
     if (net.sel) root(net.sel);
-    // for the end-to-end checks: where each node is drawn
+    else go({});
+    // for the end-to-end checks: where each node and cluster is drawn
     if (import.meta.env.DEV)
-      (window as any).__netCanvas = { mode: () => mode, view: () => view, nodes: () => [...nodes.values()].map((n) => ({ id: n.id, title: n.title, kind: n.kind, ...toScreen(n) })), edges: () => edges.size };
+      (window as any).__netCanvas = {
+        mode: () => mode, view: () => view, scope: () => scope, edges: () => edges.size,
+        nodes: () => [...nodes.values()].map((n) => ({ id: n.id, title: n.title, kind: n.kind, ...toScreen(n) })),
+        clusters: () => circles.map((c) => ({ key: c.domain, nodes: c.nodes, ...toScreen(c), r: c.r * view.k })),
+      };
     return () => {
       ro.disconnect();
       cv.removeEventListener('wheel', wheel);
       cancelAnimationFrame(raf);
+      ctl?.abort();
       if (net.canvas?.root === root) net.canvas = null;
     };
   });
 </script>
 
-<div class="cv" bind:this={wrap} data-mode={mode} data-nodes={shown}>
-  <canvas bind:this={cv} tabindex="0" aria-label={mode === 'graph' ? 'Neighbourhood of the selected node' : 'Domains of the network'} style="cursor:{cursor}"
-    onpointerdown={down} onpointermove={move} onpointerup={up} onpointerleave={leave} ondblclick={dbl} onkeydown={key}></canvas>
+<div class="cv" bind:this={wrap} data-mode={mode} data-nodes={shown} data-place={skey(scope)}>
+  <canvas bind:this={cv} tabindex="0" style="cursor:{cursor}"
+    aria-label={mode === 'graph' ? 'Neighbourhood of the selected node' : mode === 'nodes' ? 'Nodes of the cluster' : 'Clusters of the network'}
+    onpointerdown={down} onpointermove={move} onpointerup={up_} onpointerleave={leave} ondblclick={dbl} onkeydown={key}></canvas>
 
   <div class="tools">
-    {#if mode === 'graph'}
-      <button class="btn" onclick={backToMap} aria-label="Network overview" title="Back to the domain map"><Icon name="back" size={14} /><span class="t">Network overview</span></button>
+    {#if mode === 'graph' || scope.domain}
+      <button class="btn icon upbtn" onclick={up} aria-label="Back" title="Back one level (Backspace)"><Icon name="back" /></button>
     {/if}
-    <div class="zoom">
+    <nav class="crumbs" aria-label="Where you are in the network">
+      {#each crumbs as c, i (i)}
+        {#if i}<span class="sep" aria-hidden="true">›</span>{/if}
+        {#if c.at}
+          <button class="crumb" onclick={() => toPlace(c.at!)} title={c.label}>{c.label}</button>
+        {:else}
+          <span class="crumb here" aria-current="location" title={c.label}>{c.label}</span>
+        {/if}
+      {/each}
+    </nav>
+    {#if mode === 'nodes' && (pg.prev.length || pg.next)}
+      <div class="pair">
+        <button class="btn icon" onclick={() => turn(-1)} disabled={!pg.prev.length || !!loading} aria-label="Previous nodes" title="The {PAGE} nodes before these"><Icon name="back" /></button>
+        <button class="btn icon" onclick={() => turn(1)} disabled={!pg.next || !!loading} aria-label="Next nodes" title="The next {PAGE} nodes"><Icon name="forward" /></button>
+      </div>
+    {/if}
+    <div class="pair">
       <button class="btn icon" onclick={() => zoomAt(0.8)} aria-label="Zoom out" title="Zoom out"><Icon name="minus" /></button>
       <button class="btn icon" onclick={() => zoomAt(1.25)} aria-label="Zoom in" title="Zoom in"><Icon name="plus" /></button>
     </div>
@@ -790,15 +1103,7 @@
   {#if loading}<p class="state muted" role="status">{loading}</p>{/if}
   {#if gErr}<p class="state error-line" role="alert">{gErr}</p>{/if}
 
-  <p class="legend muted">
-    {#if mode === 'domains'}
-      Each circle is a domain, sized by its number of nodes. Click one to browse it, or search on the left.
-    {:else if net.connecting && !net.connecting.dst}
-      Click the node to connect “{net.connecting.srcTitle}” to.
-    {:else}
-      Double-click a node to expand it. Hollow nodes and dashed lines lie in another domain.{capped ? ` Showing the newest ${fmtInt(shown)} nodes.` : ''}
-    {/if}
-  </p>
+  <p class="legend muted" title={legend}>{legend}</p>
 </div>
 
 <style>
@@ -840,11 +1145,59 @@
   .tools .btn:hover:not(:disabled) {
     background: var(--raise);
   }
-  .zoom {
+  .pair {
     display: flex;
     gap: 2px;
   }
-  /* a narrow canvas keeps the toolbar on one line: icons only, names in the tooltips */
+  .upbtn {
+    display: none;
+  }
+  .crumbs {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    height: var(--ctl);
+    padding: 0 4px;
+    background: rgba(17, 17, 17, 0.92);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    font-size: 13px;
+  }
+  .crumb {
+    min-width: 0;
+    max-width: 26ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 6px;
+    line-height: calc(var(--ctl) - 2px);
+    color: var(--muted);
+    background: none;
+    border: 0;
+    font: inherit;
+  }
+  button.crumb {
+    cursor: pointer;
+  }
+  button.crumb:hover {
+    color: var(--white);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  button.crumb:focus-visible {
+    outline: 1px solid #6a6a6a;
+    outline-offset: -2px;
+  }
+  .crumb.here {
+    color: var(--white);
+    font-weight: 500;
+    flex-shrink: 1;
+  }
+  .sep {
+    color: #5a5a5a;
+    flex-shrink: 0;
+  }
+  /* a narrow canvas keeps the toolbar on one line: icons only, names in the tooltips, and only the place shown */
   @container (max-width: 560px) {
     .tools .t {
       display: none;
@@ -852,6 +1205,12 @@
     .tools .btn {
       width: var(--ctl);
       padding: 0;
+    }
+    .upbtn {
+      display: inline-flex;
+    }
+    .crumbs > :not(:last-child) {
+      display: none;
     }
   }
   .gap {

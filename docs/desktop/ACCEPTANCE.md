@@ -1,5 +1,33 @@
 # Acceptance evidence
 
+## MPN Studio 0.4.1 (14 November 2026)
+
+Fixes the canvas for large networks: opening Yaob Origin N119M showed one circle per domain that only grew when zoomed,
+with no way to reach individual nodes. The canvas now drills down network → domain → kind → dataset → pages of real
+nodes (see [PROJECTS.md](PROJECTS.md#exploring-a-large-network-on-the-canvas)).
+
+Checked in the development build against the real Origin pack (local copy): Network › People › Person showed 60 real
+people, "Nodes 1–60 of 499,054"; zooming into Biology opened it and zooming out returned to the network; Biology ›
+Concept › Wikidata showed 60 concepts, Next showed 61–120 of 451,341; double-clicking a node opened its neighbourhood
+and the breadcrumb returned to the same page; a search result ("Photosynthesis") opened its 40-node neighbourhood under
+Network › Biology › Concept. Of the first 60 Wikidata concepts in Biology, 40 have no stored relationships in the pack;
+they are shown as single nodes with that said.
+
+Packaged `MPN-Studio_0.4.1_x86_64.AppImage` in a real 1440×900 X11 window (Xvfb, xdotool), Origin linked to the local
+pack: the domain map opened; clicking People showed Claim 7,085,451, Person 499,054 and Extracted fact 8; clicking
+Person showed 60 named people ("Nodes 1–60 of 499,054"); double-clicking Mitt Romney opened his 10 relationships; the
+Person breadcrumb returned to the same page; zooming out climbed back to the network and stopped at half size there;
+zooming into People opened it and then its largest cluster, Claim; a claim opened with an "about" link to its subject
+(Abel Mutai); searching "photosynthesis" and clicking the first result opened that node under Network › Languages ›
+Lexeme. Memory in use stayed between 94 and 213 MiB. The pack's 143 files kept their sizes and modification times.
+With the Spark server as the source (no counts inside a domain), People listed its nodes directly with that said.
+`scripts/window-acceptance.sh` on the same AppImage: 17 of 17.
+
+![The network as domains](acceptance/0.4.1/network.png)
+![People › Person: 60 real people](acceptance/0.4.1/people-person-nodes.png)
+![A person's relationships](acceptance/0.4.1/neighbourhood.png)
+![A claim and the node it is about](acceptance/0.4.1/claim-subject.png)
+
 ## MPN Studio 0.4.0 (14 November 2026)
 
 Tests A to J of the 0.4 brief, on Ubuntu 26.04 x86-64 (i9-11900F, RTX 4060 Ti). "Window" means the packaged AppImage

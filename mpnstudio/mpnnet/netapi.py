@@ -163,7 +163,8 @@ class NetworkReader:
             rows = c.execute(f"SELECT {st.COLS} FROM nodes WHERE rid>? AND rid<=? AND {' AND '.join(conds)} ORDER BY rid LIMIT ?",
                              (rid, rid + window, *args, want)).fetchall()
             mx = c.execute("SELECT max(rid) FROM nodes").fetchone()[0] or 0
-            scanned += window
+            # count the rows this window actually covered, so small partitions do not use up the budget
+            scanned += max(1, min(window, mx - rid))
             for r in rows:
                 d = st._row(r)
                 d["pack"] = p.get("pack_id")

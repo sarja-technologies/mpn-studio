@@ -33,18 +33,18 @@ Get the files from the [Releases page](https://github.com/sarja-technologies/mpn
 
 | File | For |
 |---|---|
-| `mpn-studio_0.4.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
-| `MPN-Studio_0.4.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
+| `mpn-studio_0.4.1_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
+| `MPN-Studio_0.4.1_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
 | `SHA256SUMS-x86_64` | Checksums |
 
 ```sh
 sha256sum -c SHA256SUMS-x86_64 --ignore-missing
-sudo apt install ./mpn-studio_0.4.0_amd64.deb       # menu entry "MPN Studio"; commands mpn-studio and mpn
+sudo apt install ./mpn-studio_0.4.1_amd64.deb       # menu entry "MPN Studio"; commands mpn-studio and mpn
 # or
-chmod +x MPN-Studio_0.4.0_x86_64.AppImage && ./MPN-Studio_0.4.0_x86_64.AppImage
+chmod +x MPN-Studio_0.4.1_x86_64.AppImage && ./MPN-Studio_0.4.1_x86_64.AppImage
 ```
 
-0.4.0 is built for x86-64 only; for ARM64 machines such as the DGX Spark, use the ARM64 packages of
+0.4.1 is built for x86-64 only; for ARM64 machines such as the DGX Spark, use the ARM64 packages of
 [0.3.0](https://github.com/sarja-technologies/mpn-studio/releases/tag/v0.3.0). 0.4 opens 0.3 projects as they are.
 
 The packages include llama.cpp builds for CPU, CUDA (NVIDIA) and, on x86-64, Vulkan, and use the first that finds a

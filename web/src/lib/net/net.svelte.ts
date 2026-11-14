@@ -84,10 +84,14 @@ export interface CanvasApi {
   dropEdge(src: string, dst: string, rel: string): void;
   /** is the node on the canvas? */
   has(id: string): boolean;
-  /** back to the domain map */
+  /** back to the whole network */
   overview(): void;
+  /** one level up: from a neighbourhood to its cluster, from a cluster to the place around it */
+  up(): void;
+  /** show the clusters inside one domain */
+  open(domain: string): void;
   fit(): void;
-  mode(): 'domains' | 'graph';
+  mode(): 'map' | 'nodes' | 'graph';
 }
 
 // The fixed vocabularies of mpnstudio/mpnnet/schema.py. A claim is never offered as a kind.
@@ -98,6 +102,8 @@ export const DOMAINS = ['general', 'mathematics', 'physics', 'chemistry', 'biolo
   'environment', 'military'];
 export const KINDS = ['concept', 'lexeme', 'sense', 'work', 'person', 'organisation', 'venue', 'topic', 'procedure',
   'extracted_fact', 'migrated'];
+/** kinds to filter by: claims included (they are browsed, never made by hand) */
+export const FILTER_KINDS = [...KINDS, 'claim'];
 export const REL_SUGGESTIONS = ['related to', 'part of', 'instance of', 'subclass of', 'cites', 'located in'];
 
 const WORDS: Record<string, string> = { art_culture: 'Art and culture', film_media: 'Film and media' };
@@ -306,6 +312,9 @@ class Net {
   browse(domain: string) {
     this.q = '';
     this.domain = domain;
+    this.kind = '';
+    // the canvas shows what the domain holds, unless a neighbourhood is open there
+    if (this.canvas && this.canvas.mode() !== 'graph') this.canvas.open(domain);
   }
 
   // ---------------------------------------------------------------- edits (forks)

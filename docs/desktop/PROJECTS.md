@@ -59,6 +59,27 @@ cannot collide with base ids. Undo and redo are revisions, so history is never r
 A new fork of Origin took 0.03 s and 91 KB on disk; after one edit its folder was 121 KiB. The base's part files kept
 their size and modification time.
 
+## Exploring a large network on the canvas
+
+The canvas never draws the whole network. It shows clusters and opens them one level at a time:
+
+1. **Network**: one circle per domain, sized by its number of nodes.
+2. **Domain**: the kinds of node in it (concepts, works, people, claims…).
+3. **Kind**: the datasets those nodes come from. A level with a single cluster inside is passed straight through.
+4. **Nodes**: 60 real nodes of the cluster with their titles and the relationships among them; Previous and Next page
+   through the rest with the network's own cursor.
+
+Click a cluster or zoom into it to open it; zoom out, press Backspace or Escape, or use the breadcrumb to go back.
+Click a node to inspect it, double-click to open its neighbourhood. A search result opens its node's neighbourhood
+directly, under the breadcrumb of its domain and kind. A claim's neighbourhood shows the node the claim is about.
+
+Counts come from each partition's count table (`GET /api/ws/clusters`, about a millisecond on Origin), never from a
+scan of the nodes. Links among the nodes on a page come from one bounded relationship page per node
+(`POST /api/ws/links`, at most 120 nodes). A server that does not report counts inside a domain (the Spark's
+`mpn-network/1` API) lists the domain's nodes directly. In a fork, its own new nodes form a cluster of their own.
+
+Many Wikidata nodes in Origin carry claims but no stored relationships; the canvas shows them alone and says so.
+
 ## Actions
 
 | Action | network | linked | fork |

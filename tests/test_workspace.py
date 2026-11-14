@@ -32,6 +32,10 @@ def pack(tmp_path):
              _node("wd:Q2", "Algebra"), _node("wd:Q3", "Geometry"), _node("wd:Q4", "Waterloo", "geography"),
              _node("wd:Q5", "Ada Lovelace", "people", "person")]
     ids = [n["nid"] for n in nodes]
+    # a claim is tied to what it is about by its subject field, not by a relationship
+    claim = _node("claim:Q5:P27", "Ada Lovelace — country: United Kingdom", "people", "claim")
+    claim["subject"] = ids[4]
+    nodes.append(claim)
     edges = [(ids[1], "P361", ids[0], None, "both"), (ids[2], "P361", ids[0], None, "both"), (ids[4], "P101", ids[0], None, "both")]
     st.write_batch("t", 1, 1, nodes, edges, xrefs=[("wd:" + n["key"].split(":")[1], n["nid"]) for n in nodes])
     st.close()
@@ -72,9 +76,9 @@ def test_link_is_protected_and_reads_the_real_network(client, pack):
     r = ok(client.post("/api/projects/link", json={"name": "Test network", "sources": [{"mode": "local", "target": str(pack)}]}))
     st = ok(client.get("/api/ws/state"))
     assert st["kind"] == "linked" and st["read_only"] and st["connected"]
-    assert st["identity"]["nodes"] == 5
+    assert st["identity"]["nodes"] == 6
     ov = ok(client.get("/api/ws/overview"))
-    assert ov["validated_nodes"] == 5 and ov["relationships"] == 3
+    assert ov["validated_nodes"] == 6 and ov["relationships"] == 3
     hits = ok(client.get("/api/ws/search", params={"q": "algebra"}))["results"]
     assert hits and hits[0]["title"] == "Algebra"
     n = ok(client.get(f"/api/ws/node/{hits[0]['id']}"))
@@ -82,7 +86,7 @@ def test_link_is_protected_and_reads_the_real_network(client, pack):
     assert client.patch(f"/api/ws/node/{hits[0]['id']}", json={"title": "x"}).status_code == 409   # protected
     # the home screen lists it with its size and no copied data
     p = next(x for x in ok(client.get("/api/projects"))["projects"] if x["id"] == r["id"])
-    assert p["kind"] == "linked" and p["nodes"] == 5 and p["bytes"] < 10_000
+    assert p["kind"] == "linked" and p["nodes"] == 6 and p["bytes"] < 10_000
     assert digest(pack) == before
 
 
@@ -111,7 +115,7 @@ def test_fork_edits_never_touch_the_base(client, pack):
     assert not ok(client.get("/api/ws/search", params={"q": "geometry"}))["results"]
     # the overview counts the fork's state
     ov = ok(client.get("/api/ws/overview"))
-    assert ov["validated_nodes"] == 5 and ov["base_nodes"] == 5 and ov["changes"]["nodes_added"] == 1
+    assert ov["validated_nodes"] == 6 and ov["base_nodes"] == 6 and ov["changes"]["nodes_added"] == 1
     # undo the deletion, redo it, undo again
     ok(client.post("/api/ws/undo"))
     assert ok(client.get(f"/api/ws/node/{geo}"))["node"]["title"] == "Geometry"
@@ -287,3 +291,50 @@ def test_overlay_reads_are_safe_across_threads(tmp_path):
     assert not errors, errors[:3]
     assert ov.stats()["nodes_added"] == 120
     ov.close()
+
+
+def test_clusters_drill_down_to_real_nodes(client, pack):
+    """The canvas drills network → domain → kind → dataset → nodes; every count is the store's own."""
+    before = digest(pack)
+    ok(client.post("/api/projects/link", json={"sources": [{"mode": "local", "target": str(pack)}]}))
+    net = ok(client.get("/api/ws/clusters"))
+    assert net["level"] == "network" and net["exact"]
+    assert {c["domain"]: c["nodes"] for c in net["children"]} == {"mathematics": 3, "geography": 1, "people": 2}
+    ppl = ok(client.get("/api/ws/clusters", params={"domain": "people"}))
+    assert ppl["level"] == "domain" and {c["kind"]: c["nodes"] for c in ppl["children"]} == {"person": 1, "claim": 1}
+    ds = ok(client.get("/api/ws/clusters", params={"domain": "people", "kind": "person"}))
+    assert ds["children"] == [{"domain": "people", "kind": "person", "dataset": "test", "label": "Test", "nodes": 1}]
+    # the leaf lists the real nodes, filtered by kind
+    got = ok(client.get("/api/ws/browse", params={"domain": "people", "kind": "person"}))["results"]
+    assert [r["title"] for r in got] == ["Ada Lovelace"]
+    # relationships among the nodes shown together
+    ids = [r["id"] for r in ok(client.get("/api/ws/browse", params={"domain": "mathematics"}))["results"]]
+    edges = ok(client.post("/api/ws/links", json={"ids": ids}))["edges"]
+    assert len(edges) == 2 and all(e["rel"] == "part of" for e in edges)
+    assert client.get("/api/ws/clusters", params={"domain": "nowhere"}).status_code >= 400
+    assert digest(pack) == before
+
+
+def test_a_claim_opens_with_its_subject(client, pack):
+    ok(client.post("/api/projects/link", json={"sources": [{"mode": "local", "target": str(pack)}]}))
+    claim = ok(client.get("/api/ws/browse", params={"domain": "people", "kind": "claim"}))["results"][0]
+    g = ok(client.get(f"/api/ws/node/{claim['id']}/graph"))
+    assert "Ada Lovelace" in {n["title"] for n in g["nodes"]}
+    assert any(e["rel"] == "about" and e["src"] == claim["id"] for e in g["edges"])
+
+
+def test_fork_clusters_count_new_nodes_and_browse_filters_them_by_kind(client, pack):
+    base = ok(client.post("/api/projects/link", json={"sources": [{"mode": "local", "target": str(pack)}]}))["id"]
+    ok(client.post(f"/api/projects/{base}/duplicate", json={"name": "Clusters fork"}))
+    ok(client.post("/api/ws/nodes", json={"title": "Charles Babbage", "domain": "people", "kind": "person"}))
+    ppl = ok(client.get("/api/ws/clusters", params={"domain": "people"}))
+    assert {c["kind"]: c["nodes"] for c in ppl["children"]}["person"] == 2
+    claims = ok(client.get("/api/ws/browse", params={"domain": "people", "kind": "claim"}))["results"]
+    assert "Charles Babbage" not in {r["title"] for r in claims}
+    people = ok(client.get("/api/ws/browse", params={"domain": "people", "kind": "person"}))["results"]
+    assert "Charles Babbage" in {r["title"] for r in people}
+    ds = ok(client.get("/api/ws/clusters", params={"domain": "people", "kind": "person"}))["children"]
+    mine = next(c for c in ds if c["dataset"] == "_fork")
+    assert mine["nodes"] == 1 and mine["label"] == "Added in this project"
+    own = ok(client.get("/api/ws/browse", params={"domain": "people", "kind": "person", "dataset": "_fork"}))
+    assert [r["title"] for r in own["results"]] == ["Charles Babbage"] and own["cursor"] is None

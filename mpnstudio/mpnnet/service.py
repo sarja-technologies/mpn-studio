@@ -112,6 +112,30 @@ class Local:
             raise NetError(str(e))
         raise NetError("Unknown query.", 404)
 
+    def facets(self, domain: str | None, kind: str | None) -> dict:
+        """Exact node counts inside a domain (by kind and dataset), from each partition's count table: a few dozen rows
+        per partition, never a scan of the nodes. Only validated nodes are counted, as in the overview."""
+        from . import schema as S
+        conds, args = ["status=1"], []
+        if domain:
+            if domain not in S.DOMAIN_ID:
+                raise NetError("unknown domain")
+            conds.append("domain=?")
+            args.append(S.DOMAIN_ID[domain])
+        if kind:
+            if kind not in S.KIND_ID:
+                raise NetError("unknown kind")
+            conds.append("kind=?")
+            args.append(S.KIND_ID[kind])
+        tot: dict[tuple[str, int], int] = {}
+        for _p, st in self.reader.fed.packs:
+            for i in range(st.P):
+                q = f"SELECT kind, ds, sum(n) FROM counts WHERE {' AND '.join(conds)} GROUP BY kind, ds"
+                for k, ds, n in st.conn(i).execute(q, args):
+                    key = (S.KINDS[k], int(ds))
+                    tot[key] = tot.get(key, 0) + int(n)
+        return {"rows": [{"kind": k, "dataset": ds, "nodes": n} for (k, ds), n in tot.items() if n > 0]}
+
     def close(self):
         self.pool.shutdown(wait=False, cancel_futures=True)
         for _p, st in self.reader.fed.packs:
@@ -154,6 +178,10 @@ class Remote:
             return r.json()
         except ValueError:
             raise NetError(f"{self.base} did not answer with JSON.", 502)
+
+    def facets(self, domain: str | None, kind: str | None) -> dict:
+        # the network API (mpn-network/1) reports counts by domain, by kind and by dataset, but not combined
+        raise NetError("This source does not report node counts inside a domain.", 501)
 
     def close(self):
         self.client.close()

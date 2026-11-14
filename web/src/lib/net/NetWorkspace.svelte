@@ -102,7 +102,7 @@
     } else if (e.key === 'Escape') {
       if (net.connecting) net.connecting = null;
       else if (net.sel) net.select(null);
-      else if (net.canvas?.mode() === 'graph') net.canvas.overview();
+      else net.canvas?.up();
     } else if ((e.key === 'n' || e.key === 'N') && net.editable) {
       e.preventDefault();
       openAdd();

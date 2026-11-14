@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { errText, fmtInt, get } from '../api';
   import Icon from '../ui/Icon.svelte';
-  import { DOMAINS, KINDS, net, word, type Card } from './net.svelte';
+  import { DOMAINS, FILTER_KINDS, net, word, type Card } from './net.svelte';
 
   let list = $state.raw<Card[]>([]);
   let mode = $state<'search' | 'browse' | null>(null);
@@ -122,7 +122,7 @@
       </select>
       <select class="field" bind:value={net.kind} aria-label="Kind">
         <option value="">Every kind</option>
-        {#each KINDS as k (k)}<option value={k}>{word(k)}</option>{/each}
+        {#each FILTER_KINDS as k (k)}<option value={k}>{word(k)}</option>{/each}
       </select>
     </div>
     {#if !showDomains}
