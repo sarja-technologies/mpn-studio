@@ -4,6 +4,8 @@
 #   OUT=/tmp/wa APP=./MPN-Studio_0.4.0_x86_64.AppImage SRC_PROJECT=<a 0.3 project folder> REMOTE=http://mpn-host.local:8844 scripts/window-acceptance.sh
 # Coordinates are for the 1440x900 window the app opens with. Origin search terms assume a Wikidata-based network.
 set -uo pipefail
+# SEARCH (default "Douglas Adams") and NODES_RE (default the Origin count) adapt the checks to another network served at REMOTE.
+SEARCH=${SEARCH:-Douglas Adams}; SEARCH_URL=${SEARCH// /%20}; NODES_RE=${NODES_RE:-1191768[0-9]{2}}
 : "${OUT:?}" "${APP:?}" "${SRC_PROJECT:?}" "${REMOTE:?address of a computer serving the large network, e.g. http://mpn-host.local:8844}"
 export DISPLAY=:97 GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 NO_AT_BRIDGE=1
 unset WAYLAND_DISPLAY MPN_DEV_PYTHON MPN_DEV_ROOT
@@ -65,19 +67,19 @@ echo "=== 4 Test C: link Yaob Origin by address, search, inspect"
 click 67 20 2; click 385 85 1; click 686 491 0.3; type_ "$REMOTE"; click 953 491 4; shot 11-probe; click 915 584 6; shot 12-origin
 check "Origin linked project created" 'api /api/projects | python3 -c "import json,sys; print([p for p in json.load(sys.stdin)[\"projects\"] if p.get(\"kind\")==\"linked\"])" | grep -q linked'
 api /api/ws/state > "$OUT/ws-origin.json"
-check "Origin reports 119M nodes" 'grep -qE "1191768[0-9]{2}" "$OUT/ws-origin.json"'
-click 150 64 0.3; type_ "Douglas Adams"; sleep 3; shot 13-search; click 150 196 3; shot 14-node
-check "search answers in the window session" 'api "/api/ws/search?q=Douglas%20Adams&limit=5" | grep -q "Douglas Adams"'
+check "the linked network reports its node count" 'grep -qE "$NODES_RE" "$OUT/ws-origin.json"'
+click 150 64 0.3; type_ "$SEARCH"; sleep 3; shot 13-search; click 150 196 3; shot 14-node
+check "search answers in the window session" 'api "/api/ws/search?q=$SEARCH_URL&limit=5" | grep -q "$SEARCH"'
 
 echo "=== 5 Test D: Duplicate to edit, edit, original unchanged"
 click 1287 20 1.5; shot 15-dup; click 720 562 0.3; key ctrl+a; type_ "Window Fork"; key Return; sleep 6; shot 16-fork
 check "fork project created and open" 'api /api/ws/state | grep -q "\"fork\""'
-click 150 64 0.3; key ctrl+a; type_ "Douglas Adams"; sleep 3; click 150 196 3
+click 150 64 0.3; key ctrl+a; type_ "$SEARCH"; sleep 3; click 150 196 3
 click 1118 121 1; shot 17-editform; key Tab; key ctrl+End; type_ " WINDOW-EDIT-MARKER"; key ctrl+Return; sleep 3; shot 18-edited
-api "/api/ws/search?q=Douglas%20Adams&limit=1" > "$OUT/fork-search.json"
+api "/api/ws/search?q=$SEARCH_URL&limit=1" > "$OUT/fork-search.json"
 NID=$(js 'd["results"][0]["id"]' <"$OUT/fork-search.json" 2>/dev/null)
 check "fork node carries the edit" 'api "/api/ws/node/$NID" | grep -q WINDOW-EDIT-MARKER'
-check "original on the server is unchanged" '! curl -s -m 10 "$REMOTE/api/network/v1/node/$NID" | grep -q WINDOW-EDIT-MARKER && curl -s -m 10 "$REMOTE/api/network/v1/node/$NID" | grep -q "Douglas Adams"'
+check "original on the server is unchanged" '! curl -s -m 10 "$REMOTE/api/network/v1/node/$NID" | grep -q WINDOW-EDIT-MARKER && curl -s -m 10 "$REMOTE/api/network/v1/node/$NID" | grep -q "$SEARCH"'
 FORKDIR=$(ls -d "$TH/.local/share/mpn-studio/projects"/window-fork* 2>/dev/null | head -1)
 du -sk "$FORKDIR" > "$OUT/fork-size.txt"; check "fork folder is small (<2 MiB)" '[ "$(cut -f1 "$OUT/fork-size.txt")" -lt 2048 ]'
 

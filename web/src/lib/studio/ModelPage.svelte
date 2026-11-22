@@ -50,6 +50,28 @@
     studio.load();
     if (t?.state === 'done') app.toast(`${m?.name} is built. Its test question was answered from the network.`);
   }
+  async function doRebind() {
+    error = null;
+    build = null;
+    const t = await studio.follow(post<TaskView>(`api/library/models/${id}/rebind`, {}), (t) => (build = t)).catch((e) => ((error = errText(e)), null));
+    await load();
+    studio.load();
+    if (t?.state === 'done') app.toast(`${m?.name} now answers with ${m?.core?.name}. The network was not rebuilt.`);
+  }
+  let testing = $state(false);
+  let testMsg = $state.raw<{ ok: boolean; message: string; latency_ms: number | null } | null>(null);
+  async function testCore() {
+    if (!m?.core?.endpoint_id) return;
+    testing = true;
+    testMsg = null;
+    try {
+      testMsg = await post(`api/core-servers/${m.core.endpoint_id}/test`);
+    } catch (e) {
+      testMsg = { ok: false, message: errText(e), latency_ms: null };
+    }
+    testing = false;
+    studio.load();
+  }
   async function doExport() {
     const dir = await pickFolder('Choose the folder to save the .mpn file in');
     if (!dir) return;
@@ -66,7 +88,10 @@
   }
   const copy = (s: string) => navigator.clipboard?.writeText(s).then(() => app.toast('Copied.'));
 
-  const net = $derived(m?.network ? studio.network(m.network.id) : null);
+  const net = $derived(m?.network?.id ? studio.network(m.network.id) : null);
+  const coreOnly = $derived(!!m?.build?.ok && !!m?.status.problems.some((p) => p.startsWith('The core changed')));
+  const onServer = $derived(!!m?.core?.endpoint_id);
+  const server = $derived(m?.core?.endpoint_id ? studio.server(m.core.endpoint_id) : null);
   const routerOk = $derived(!!(net?.router && m?.encoder && studio.core(m.encoder.id)?.sha256 === net.router.encoder?.sha256));
   const report = $derived(m?.build_report);
   const test = $derived(report?.test);
@@ -77,7 +102,7 @@
       s.step === 'network snapshot' ? `${fmtInt(s.nodes)} nodes and ${fmtInt(s.relations)} relations, revision ${s.revision}`
       : s.step === 'routing' ? (s.mode === 'learned router' ? 'routing by the learned router' : s.mode)
       : s.step === 'embedding cache' ? (s.reused ? `${fmtInt(s.reused)} node embeddings reused from earlier builds` : '')
-      : s.step === 'model loaded' ? `core loaded on ${s.device === 'cpu' ? 'the CPU' : s.device.toUpperCase()} in ${s.seconds} s`
+      : s.step === 'model loaded' ? (s.device === 'remote' ? `core on its server answered in ${s.seconds} s` : `core loaded on ${s.device === 'cpu' ? 'the CPU' : s.device.toUpperCase()} in ${s.seconds} s`)
       : s.step === 'retrieval index' ? (s.embedded_now ? `${fmtInt(s.embedded_now)} nodes embedded for retrieval` : s.covered_by_router ? `all ${fmtInt(s.covered_by_router)} nodes reachable through the router` : '')
       : s.step === 'test inference' ? (s.retrieved_expected ? 'test question answered from the expected node' : 'test question answered')
       : '',
@@ -87,7 +112,7 @@
 <div class="wrap">
   {#if !embedded}
     <div class="row">
-      <button class="btn quiet back" onclick={() => (studio.model = null)}>Models</button>
+      <button class="btn quiet back" onclick={() => (studio.model = null)}>Pairings</button>
     </div>
   {/if}
 
@@ -116,9 +141,13 @@
     <div class="row head">
       <div class="grow">
         <h1>{m.name}</h1>
+        {#if m.release}<p class="muted">Official pairing {m.release.pairing ?? m.release.id} {m.release.version}</p>{/if}
         <p class="muted">{m.status.state === 'ready' ? `Built ${new Date(m.status.built ?? '').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` : m.status.state === 'needs build' ? 'Needs a build' : 'Incomplete'}</p>
       </div>
-      <button class="btn {m.status.state === 'ready' ? '' : 'primary'}" disabled={m.status.state === 'incomplete' || build?.state === 'running'} onclick={doBuild}>{m.build?.ok ? 'Rebuild' : 'Build'}</button>
+      {#if coreOnly}
+        <button class="btn primary" disabled={build?.state === 'running'} onclick={doRebind}>Apply core</button>
+      {/if}
+      <button class="btn {m.status.state === 'ready' || coreOnly ? '' : 'primary'}" disabled={m.status.state === 'incomplete' || build?.state === 'running'} onclick={doBuild}>{m.build?.ok ? 'Rebuild' : 'Build'}</button>
       <div class="anchor">
         <button class="btn icon" aria-label="More actions" aria-haspopup="menu" aria-expanded={menu} onclick={() => (menu = !menu)}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></svg>
@@ -138,15 +167,35 @@
         <h2>Made of</h2>
         <div>
           <label class="lbl" for="mp-core">Cognitive core</label>
-          <select id="mp-core" class="field" value={m.core?.id ?? ''} onchange={(e) => set({ core_id: e.currentTarget.value })}>
+          <select id="mp-core" class="field" value={m.core?.id ?? ''} onchange={(e) => { testMsg = null; set({ core_id: e.currentTarget.value }); }}>
             {#if !m.core}<option value="">Choose a core</option>{/if}
-            {#each studio.cores as c (c.id)}<option value={c.id} disabled={!c.present || !c.compatibility.runnable}>{c.name} ({fmtParams(c.info.parameters)}, {c.info.quantization})</option>{/each}
+            {#if studio.data?.core_servers.length}
+              <optgroup label="On a server">
+                {#each studio.data.core_servers as s (s.id)}<option value={s.id_ref}>{s.name} ({s.base_url.replace(/^https?:\/\//, '').replace(/\/v1$/, '')})</option>{/each}
+              </optgroup>
+            {/if}
+            <optgroup label="Served by Studio">
+              {#each studio.cores as c (c.id)}<option value={c.id} disabled={!c.present || !c.compatibility.runnable}>{c.name} ({fmtParams(c.info.parameters)}, {c.info.quantization})</option>{/each}
+            </optgroup>
           </select>
+          {#if server}
+            <div class="row corenote">
+              <span class="muted small grow">{server.model_id}{server.last_test ? (server.last_test.ok ? `, last test answered in ${server.last_test.latency_ms} ms` : `, last test: ${server.last_test.message}`) : ', not tested yet'}</span>
+              <button class="btn" disabled={testing} onclick={testCore}>{testing ? 'Testing' : 'Test connection'}</button>
+            </div>
+            {#if testMsg}<p class={testMsg.ok ? 'muted small' : 'error-line'} role="status">{testMsg.ok ? `The core answered in ${testMsg.latency_ms} ms.` : testMsg.message}</p>{/if}
+          {:else if m.core && !onServer}
+            <p class="muted small">Served by Studio with llama.cpp.</p>
+          {/if}
+          <p class="muted small">Changing the core keeps the network and its index. Apply it to test the new core with the same question.</p>
         </div>
         <div>
-          <label class="lbl" for="mp-net">Node network</label>
+          <label class="lbl" for="mp-net">MPN network</label>
+          {#if m.network?.release && !m.network?.id}
+            <p class="problem small">{m.network.release.id} {m.network.release.version} is a read-only FG-MPN network. Studio explores those but cannot answer from one yet; choose a Studio network to build this pairing.</p>
+          {/if}
           <select id="mp-net" class="field" value={m.network?.id ?? ''} onchange={(e) => set({ network_id: e.currentTarget.value })}>
-            {#if !m.network}<option value="">Choose a network</option>{/if}
+            {#if !m.network?.id}<option value="">Choose a network</option>{/if}
             {#each studio.data?.networks.filter((n) => !n.damaged) ?? [] as n (n.id)}<option value={n.id}>{n.name} ({fmtInt(n.nodes ?? 0)} nodes)</option>{/each}
           </select>
         </div>
@@ -211,7 +260,7 @@
             </div>
           {/if}
         {:else if !build}
-          <p class="muted">Building checks the network, indexes it for the encoder, starts the model and asks it one question from the network. The build succeeds only if the answer comes from the network.</p>
+          <p class="muted">Building checks the network, indexes it for the encoder, connects to the core and asks it one question from the network. The build succeeds only if the answer comes from the network.</p>
         {/if}
       </section>
     </div>
@@ -236,6 +285,9 @@
 
     <section>
       <h2>Export</h2>
+      {#if onServer}
+        <p class="muted">This pairing answers with a core on a server, so there are no weights to put in a file. Choose a core Studio serves to export a .mpn file.</p>
+      {:else}
       <div class="choices" role="radiogroup" aria-label="Kind of file">
         <label class="choice" class:on={mode === 'complete'}>
           <input type="radio" name="mode" value="complete" bind:group={mode} />
@@ -246,10 +298,13 @@
           <span><strong>Lightweight</strong><span class="muted">The network, router and settings. The core is found by its checksum on the computer that runs it.</span></span>
         </label>
       </div>
-      <div class="row">
-        <button class="btn primary" disabled={m.status.state !== 'ready' || exp?.state === 'running'} onclick={doExport}>Export .mpn file</button>
-        {#if m.status.state !== 'ready'}<span class="muted">Build the model first.</span>{/if}
-      </div>
+      {/if}
+      {#if !onServer}
+        <div class="row">
+          <button class="btn primary" disabled={m.status.state !== 'ready' || exp?.state === 'running'} onclick={doExport}>Export .mpn file</button>
+          {#if m.status.state !== 'ready'}<span class="muted">Build the pairing first.</span>{/if}
+        </div>
+      {/if}
       {#if exp?.state === 'running'}
         <div class="bar"><i style="width:{pct(exp) ?? 0}%"></i></div>
         <p class="muted small">{exp.progress.label}</p>
@@ -293,6 +348,10 @@
   }
   .settings .lbl {
     margin: 0;
+  }
+  .corenote {
+    gap: 8px;
+    margin-top: 4px;
   }
   details summary {
     cursor: pointer;

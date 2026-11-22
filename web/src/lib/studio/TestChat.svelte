@@ -145,7 +145,7 @@
 <div class="chat">
   <div class="runline row">
     {#if health === 'ok'}
-      <span>Running{status?.device?.variant ? ` on ${status.device.variant === 'cpu' ? 'the CPU' : status.device.variant.toUpperCase()}` : ''}</span>
+      <span>Running{status?.core?.server ? `, core on ${status.core.server}` : status?.device?.variant ? ` on ${status.device.variant === 'cpu' ? 'the CPU' : status.device.variant.toUpperCase()}` : ''}</span>
       {#if status?.routing}<span class="muted">{status.routing}</span>{/if}
       {#if mem?.ram_bytes}<span class="muted num" title="Measured now: the runtime and its llama.cpp processes">Memory {fmtBytes(mem.ram_bytes)}{mem.gpu_bytes ? `, GPU ${fmtBytes(mem.gpu_bytes)}` : ''}</span>{/if}
       {#if gpu && !mem?.gpu_bytes}<span class="muted num" title="Memory in use on the whole GPU, by every program">GPU {Math.round(gpu.used_mib / 1024)} of {Math.round(gpu.total_mib / 1024)} GiB in use</span>{/if}

@@ -97,6 +97,51 @@ def import_store(path: str | Path, name: str) -> dict:
     return info(projects.import_store_file(path, name))
 
 
+def import_mpn_network(path: str | Path, name: str | None = None, progress=None) -> dict:
+    """The network inside a .mpn model file, as a network of its own: the file is verified first, then the network member is
+    extracted (hash-checked while copying) and adopted as a project. The core in the file is not touched or imported."""
+    import tempfile
+    from . import mpnfile
+    f = mpnfile.MpnFile(path)
+    net = (f.manifest.get("network") or {}).get("member")
+    if not net or net not in f.members:
+        raise ProjectError(f"{Path(path).name} has no network inside it.")
+    rep = f.verify(progress) if f.size < (2 << 30) else None       # a complete model is large; each member is checked as it is read anyway
+    if rep is not None and not rep["ok"]:
+        raise ProjectError(f"{Path(path).name} is damaged: " + ", ".join(m["name"] for m in rep["members"] if not m["ok"]) + ". Nothing was imported.")
+    from ..desktop import paths as dpaths
+    dpaths.cache_dir().mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=dpaths.cache_dir()) as td:
+        out = f.extract(net, Path(td) / "network.sqlite", progress)
+        slug = projects.import_store_file(out, name or f.manifest.get("name") or Path(path).stem, origin_detail=f".mpn file {Path(path).name}", kind="mpn-file")
+    return info(slug)
+
+
+def import_studio_payload(db: str | Path, checkpoint: str | Path | None, name: str, detail: str = "", encoder: dict | None = None) -> str:
+    """The Studio payload of an official network release (`studio/network/yaob-n10k.sqlite`, optionally `studio/network/checkpoint/`): the same two
+    pieces `import_yaob_release` takes from a Yaob folder. `encoder` {name, sha256} says which encoder the router was trained for."""
+    slug = projects.import_store_file(db, name, origin_detail=detail, kind="release")
+    if checkpoint and Path(checkpoint).is_dir():
+        try:
+            ename = json.loads((Path(checkpoint) / "manifest.json").read_text()).get("encoder", {}).get("name")
+            attach_router(slug, checkpoint, {"name": encoder.get("name") or ename, "sha256": encoder.get("sha256")} if encoder is not None else None)
+        except (ProjectError, OSError, ValueError):
+            shutil.rmtree(projects.project_dir(slug), ignore_errors=True)
+            raise
+    return slug
+
+
+def set_router_encoder(slug: str, encoder: dict) -> bool:
+    """Record which encoder GGUF (name, sha256) a network's router works with. False if the network has no router."""
+    m = _manifest(slug)
+    r = (m.get("references") or {}).get("router")
+    if not r:
+        return False
+    r["encoder"] = {"name": encoder.get("name"), "sha256": encoder.get("sha256")}
+    projects.write_manifest(slug, m)
+    return True
+
+
 def import_yaob_release(folder: str | Path, name: str = "Yaob N10K") -> dict:
     """A Yaob release folder (network/yaob-n10k.sqlite + network/checkpoint + models/encoder/encoder.gguf)."""
     f = Path(folder)

@@ -1,0 +1,29 @@
+# Changelog
+
+## 0.5.0 (2026-11-23)
+
+Cognitive cores and official releases.
+
+- **Cognitive cores on servers.** A core can be any OpenAI-compatible server you run or rent (llama.cpp `llama-server`, vLLM, a hosted
+  API): address, model id, optional key, **Test connection**. The key stays in a file only you can read and is never put in a pairing,
+  a log or an export.
+- **Pairings and rebinding.** A network joined to a core is a pairing. Choosing another core keeps the network, its snapshot and its
+  index: **Apply core** reconnects and asks the same test question in about a second. The network's hash does not change.
+- **Releases.** Settings, Releases reads the live catalogue (https://fylu.me/api/catalogue.json): networks, cores and prebuilt pairings,
+  with resumable, SHA-256 checked downloads and atomic installs. A network release has two payloads: `fgmpn` (read-only, explored) and
+  `studio-store` (answers in a pairing). A catalogue or manifest file can be imported.
+- **FG-MPN networks open out of the box.** The app carries the public FG-MPN runtime 0.2.2
+  (https://github.com/sarja-technologies/fgmpn; native reader on x86-64 and ARM64) and its own reader serves a store read-only: search,
+  nodes, relationships and the canvas work as for any network. No Python of yours is needed. Notices: `licenses/fgmpn/` in the app.
+  The reader does not list derived statements for a node (the explainer is not in the public runtime); an `fg://` address is looked up under Storage.
+- **ARM64 again.** 0.5.0 is built for ARM64 (DGX Spark and other ARMv8.2+ Linux machines) as well as x86-64 (0.4 was x86-64 only).
+- Fixes found by running the packages against the live data: a network release that keeps its FG-MPN store in `store/`, manifests that cannot name their own commit, a reader that outlived the app.
+- Projects made with 0.4.1 open as they are.
+
+## 0.4.1 (2026-11-14)
+
+The canvas drills down from domains to real nodes in large networks.
+
+## 0.4.0 (2026-11-14)
+
+Projects, a home screen, and large networks opened in place with forks.

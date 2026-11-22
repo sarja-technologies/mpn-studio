@@ -4,6 +4,7 @@
   import { errText, fmtBytes, fmtInt, when } from '../api';
   import { desk } from '../desktop.svelte';
   import { app } from '../state.svelte';
+  import { work } from '../work/work.svelte';
   import { clickOutside } from '../ui/actions';
   import Icon from '../ui/Icon.svelte';
   import { home, kindLine, type Project } from './home.svelte';
@@ -73,6 +74,7 @@
     </div>
     <span class="grow"></span>
     {#if desk.project}<button class="btn" onclick={() => (desk.home = false)}>Back to {desk.project.name}</button>{/if}
+    <button class="btn quiet" onclick={() => (work.library = true)}>Model library</button>
     <button class="btn quiet" onclick={() => (desk.help = 'names')}>Help</button>
     <button class="btn quiet" onclick={() => (desk.settings = 'storage')}>Settings</button>
   </header>

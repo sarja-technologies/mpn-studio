@@ -8,15 +8,15 @@ p.on('pageerror', (e) => logs.push('PAGEERROR: ' + e.message));
 p.on('console', (m) => m.type() === 'error' && logs.push('console: ' + m.text()));
 await p.goto(process.env.MPN_URL ?? 'http://127.0.0.1:8871/');
 const shot = async (name) => { await p.waitForTimeout(500); await p.screenshot({ path: `${out}/${name}-${w}.png` }); };
-await p.getByRole('button', { name: 'Models', exact: true }).waitFor({ timeout: 20000 });
+await p.getByRole('button', { name: 'Pairings', exact: true }).waitFor({ timeout: 20000 });
 await shot('models');
 const open = p.getByRole('button', { name: 'Open', exact: true });
-if (await open.count()) { await open.first().click(); await p.getByRole('heading', { name: 'Build' }).waitFor(); await shot('model'); await p.mouse.wheel(0, 2000); await shot('model-bottom'); await p.getByRole('button', { name: 'Models', exact: true }).first().click(); }
-await p.getByRole('button', { name: 'New model' }).click().catch(() => {});
+if (await open.count()) { await open.first().click(); await p.getByRole('heading', { name: 'Build' }).waitFor(); await shot('model'); await p.mouse.wheel(0, 2000); await shot('model-bottom'); await p.getByRole('button', { name: 'Pairings', exact: true }).first().click(); }
+await p.getByRole('button', { name: 'New pairing' }).click().catch(() => {});
 await shot('new-model');
 await p.getByRole('button', { name: 'Cognitive cores' }).click();
 await shot('cores');
-await p.getByRole('button', { name: 'Node networks' }).click();
+await p.getByRole('button', { name: 'MPN networks' }).click();
 await shot('networks');
 await p.getByRole('button', { name: /More actions for/ }).first().click();
 await shot('networks-menu');

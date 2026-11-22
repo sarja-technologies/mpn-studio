@@ -9,11 +9,12 @@
   import Networks from './Networks.svelte';
   import Tests from './Tests.svelte';
   import Explorer from './Explorer.svelte';
+  import { catalogue } from './catalogue.svelte';
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'models', label: 'Models' },
+    { id: 'models', label: 'Pairings' },
     { id: 'cores', label: 'Cognitive cores' },
-    { id: 'networks', label: 'Node networks' },
+    { id: 'networks', label: 'MPN networks' },
     { id: 'tests', label: 'Tests' },
     { id: 'mpnnet', label: 'MPN Network' },
   ];
@@ -21,6 +22,10 @@
 
   onMount(() => {
     studio.load();
+    catalogue.load().then(() => {            // the catalogue is read when Studio opens if it never was, or not for six hours
+      const f = catalogue.data?.source.fetched_at;
+      if (!f || Date.now() / 1000 - f > 6 * 3600) catalogue.refresh();
+    });
     const t = setInterval(() => !document.hidden && studio.load(), 8000);
     return () => clearInterval(t);
   });

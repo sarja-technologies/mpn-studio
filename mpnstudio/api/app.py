@@ -120,7 +120,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     r.set_cookie("mpn_session", SESSION_TOKEN, httponly=True, samesite="strict", path="/")
                     return r
                 return PlainTextResponse("MPN Studio: this local service only answers its own window.", status_code=401)
-        if store is None and request.url.path.startswith(("/api/", "/v1/")) and not request.url.path.startswith(("/api/desktop/", "/api/library/", "/api/projects", "/api/ws/")) and request.url.path != "/api/health":
+        if store is None and request.url.path.startswith(("/api/", "/v1/")) and not request.url.path.startswith(("/api/desktop/", "/api/library/", "/api/projects", "/api/ws/", "/api/catalogue", "/api/releases", "/api/core-servers")) and request.url.path != "/api/health":
             return JSONResponse({"error": "No project is open.", "code": "no_project"}, status_code=409)
         peer = request.client.host if request.client else ""
         try:
@@ -992,6 +992,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def _shutdown():
         from ..library import runner as _runner
         _runner.RUNS.stop_all()
+        from ..mpnnet import fgmpn_local as _fgl
+        _fgl.stop_all()
         dcompute.remote.disconnect()
         dcompute.local.stop()
         if store is not None:
@@ -1018,6 +1020,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     # ------------------------------------------------------------------ model builder (library of cores, networks, models)
     from . import library_routes
     library_routes.register(app, get_store=lambda: store, open_project=open_project, current_project=lambda: ctx["project"])
+    from . import catalogue_routes
+    catalogue_routes.register(app, library_routes.start_task)
     from ..workspace import routes as ws_routes
     ws_routes.register(app, ctx, get_store=lambda: store, open_project=open_project, close_project=close_project,
                        start_task=library_routes.start_task)

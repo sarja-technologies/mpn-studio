@@ -63,7 +63,7 @@ class Desk {
   info = $state.raw<DesktopInfo | null>(null);
   /** the home screen is shown over the open project's workspace, or instead of it when no project is open */
   home = $state(readView() !== 'editor');
-  settings = $state<null | 'storage' | 'compute' | 'backups'>(null);
+  settings = $state<null | 'storage' | 'compute' | 'backups' | 'catalogue'>(null);
   help = $state<null | 'names' | 'shortcuts' | 'about'>(null);
   busy = $state<string | null>(null);
 

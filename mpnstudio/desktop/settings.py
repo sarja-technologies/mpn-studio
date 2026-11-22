@@ -20,6 +20,9 @@ DEFAULTS: dict = {
         "python": None,                       # optional interpreter that has torch + the Yaob runtime (local inference/training)
         "remote": {"ssh_host": "", "ssh_config": "", "api_port": 8840, "runtime_port": 8841},
     },
+    # Official releases (fylume-release/1). url: where the aggregated catalogue is read from (null = Studio's default);
+    # hf_endpoint: the Hugging Face address downloads use (null = https://huggingface.co; HF_ENDPOINT overrides).
+    "catalogue": {"url": None, "hf_endpoint": None},
     # MPN networks opened read-only (Open MPN Network): {mode: remote|local, target: URL or folder, name, opened}
     "networks": {"recent": []},
     # Projects in the order they were last opened: [{id, opened}]
@@ -66,6 +69,11 @@ def update(patch: dict) -> dict:
             if not os.path.isabs(os.path.expanduser(v)):
                 raise ValueError(f"{k} must be an absolute path")
             s["storage"][k] = str(Path(v).expanduser())
+    for k in ("url", "hf_endpoint"):
+        v = (s["catalogue"].get(k) or "").strip() or None
+        if v and not v.startswith(("http://", "https://", "file://", "/")):
+            raise ValueError(f"catalogue.{k} must be an http(s) address" + (" or a file path" if k == "url" else ""))
+        s["catalogue"][k] = v.rstrip("/") if v else None
     if s["compute"]["mode"] not in ("local", "remote"):
         raise ValueError("compute.mode must be 'local' or 'remote'")
     r = s["compute"]["remote"]

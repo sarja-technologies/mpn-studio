@@ -22,6 +22,7 @@
       ssh = { ...ssh, ...settings.compute.remote };
       if (tab === 'storage') storage = await get('api/desktop/storage');
       if (tab === 'compute') compute = await get('api/desktop/compute');
+      if (tab === 'catalogue') await loadCat();
       if (tab === 'backups') backups = (await get<{ backups: any[] }>('api/desktop/backups')).backups;
       error = null;
     } catch (e) {
@@ -46,6 +47,30 @@
       await load();
     } catch (e) {
       error = errText(e);
+    }
+  }
+  let cat = $state({ url: '', hf: '' });
+  let catInfo = $state.raw<any>(null);
+  async function loadCat() {
+    try {
+      catInfo = await get('api/catalogue');
+      cat = { url: settings?.catalogue?.url ?? '', hf: settings?.catalogue?.hf_endpoint ?? '' };
+    } catch (e) {
+      error = errText(e);
+    }
+  }
+  async function saveCat() {
+    await save({ catalogue: { url: cat.url.trim() || null, hf_endpoint: cat.hf.trim() || null } });
+    if (!error) {
+      busy = 'Reading the catalogue';
+      try {
+        await post('api/catalogue/refresh');
+        app.toast('The catalogue was read from the new address.');
+      } catch (e) {
+        error = errText(e);
+      }
+      busy = null;
+      await loadCat();
     }
   }
   async function choose(key: 'models_dir' | 'checkpoints_dir' | 'datasets_dir', title: string) {
@@ -106,6 +131,7 @@
     ['storage', 'Storage'],
     ['compute', 'Compute'],
     ['backups', 'Backups'],
+    ['catalogue', 'Releases'],
   ] as const;
 </script>
 
@@ -240,6 +266,29 @@
             {/if}
           {/if}
         {:else if remote?.error}<p class="error-line">{remote.error}</p>{/if}
+      </section>
+    {/if}
+
+    {#if tab === 'catalogue'}
+      <section>
+        <h3>Where official releases come from</h3>
+        <p class="muted">Networks, cores and pairings are listed from one catalogue. Downloads come from the hosting each release names, and every file is checked against its SHA-256 and size.</p>
+        <label class="lbl" for="cat-url">Catalogue address</label>
+        <input id="cat-url" class="field mono" bind:value={cat.url} placeholder={catInfo?.default_url ?? ''} spellcheck="false" />
+        <p class="muted small">An https address, or the full path of a catalogue file. Empty uses {catInfo?.default_url}.</p>
+        <label class="lbl" for="cat-hf">Hugging Face address</label>
+        <input id="cat-hf" class="field mono" bind:value={cat.hf} placeholder="https://huggingface.co" spellcheck="false" />
+        <p class="muted small">Only change this to use a mirror. Private repositories need the HF_TOKEN environment variable.</p>
+        <div class="row">
+          <button class="btn primary" disabled={!!busy} onclick={saveCat}>Save and read the catalogue</button>
+          {#if busy}<span class="muted">{busy}</span>{/if}
+        </div>
+        {#if catInfo}
+          <p class="muted small">
+            {catInfo.releases.length} release{catInfo.releases.length === 1 ? '' : 's'} known{catInfo.source.fetched_at ? `, last read ${new Date(catInfo.source.fetched_at * 1000).toLocaleString()}` : ', not read yet'}.
+            FG-MPN runtime: {catInfo.fgmpn.available ? `version ${catInfo.fgmpn.version}` : 'not installed'}.
+          </p>
+        {/if}
       </section>
     {/if}
 

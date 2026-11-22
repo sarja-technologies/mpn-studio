@@ -10,6 +10,8 @@
 | 3CN | Three Cell Node |
 | C4B | cognitive core of about 4 billion parameters |
 | N10K | the 10,000-node network configuration |
+| Pairing | one MPN network joined to one cognitive core, with settings. Called a *model* before 0.5; the API paths (`/api/library/models`), `model.json` and `mpn model` keep that name |
+| Core on a server | a cognitive core Studio does not run: any OpenAI-compatible server (see ../catalogue.md) |
 
 Where it is shown: window title and header tooltip, project selector subtitle, *Help, Names and terms*, *About*,
 `project.json` (`architecture`), the package metadata, and `docs/`.

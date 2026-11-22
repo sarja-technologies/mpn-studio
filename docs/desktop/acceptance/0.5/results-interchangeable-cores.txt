@@ -1,0 +1,34 @@
+Interchangeable cores, one installed network (acceptance, 2026-11-22)
+
+Network: Yaob N10K (10,160 nodes, 19 MPNs), imported once with `mpn network import-store`, project "yaob-n10k".
+Core A: llama.cpp (runtime/llama/cuda, this build of Studio) serving Qwen3.5-4B-Q4_K_M.gguf on 127.0.0.1:18081, started with an API key.
+Core B: a second llama.cpp process serving Qwen3-4B-Instruct-2507-Q4_K_M.gguf on 127.0.0.1:18082, no key.
+Both were configured in Studio as cores on servers (`mpn core add-server`, key read from stdin); the key is in config/secrets.json (0600) only.
+Retrieval: text search (no encoder). The pairing "Yaob N10K on a server core" was built once (2.4 s) and then pointed at A, B, A.
+The network was never reinstalled, rebuilt or edited: its content hash and revision are unchanged below.
+
+== network yaob-n10k content hash before: d874c55e9a546a60 rev 2
+== pairing core: A
+Incense is an aromatic biotic material that releases fragrant smoke when burnt. It is used for aesthetic, religious, and ceremonial purposes, as well as for aromatherapy and meditation. It is composed of aromatic plant materials often combined with essential oils.
+
+
+56 tokens, 1.1 s, 52.1 tok/s
+snapshot content hash with core A: 35b3d02a71dd3b42
+== switching the pairing to core B (mpn model set ... core_id, then rebind)
+  "state": "needs build",
+  "problems": [
+   "The core changed since the last test. Apply it: the network is kept."
+core connected in 0.1 s
+  "state": "ready",
+   "answer": "Incense is an aromatic biotic material that releases fragrant smoke when burnt, and it is used for aesthetic, religious, meditative, and ceremonial purposes [1]. It is composed of aromatic plant materials, often combined with essential oils [1].",
+  "rebound": true
+real	0m1.220s
+== pairing core: B, same question
+Incense is an aromatic biotic material that releases fragrant smoke when burnt. The term is used for either the material or the aroma. It is used for aesthetic reasons, religious worship, aromatherapy, meditation, and ceremonial reasons. It may also be used as a simple deodorant or insect repellent. Incense is composed of aromatic plant materials, often combined with essential oils. The forms taken by incense differ with the underlying culture, and have changed with advances in technology and increasing number of uses. [1]
+Sources: [1] Incense
+108 tokens, 1.7 s, 65.7 tok/s
+snapshot content hash with core B: 35b3d02a71dd3b42
+network yaob-n10k content hash after:  d874c55e9a546a60 rev 2
+== back to core A, rebind again
+core connected in 0.3 s
+snapshot content hash with core A again: 35b3d02a71dd3b42

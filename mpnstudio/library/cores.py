@@ -161,14 +161,14 @@ def _write_meta(cid: str, m: dict) -> None:
 
 
 def import_gguf(path: str | Path, mode: str = "copy", name: str | None = None, progress: Progress | None = None,
-                attach_to: str | None = None, known_sha256: str | None = None) -> dict:
+                attach_to: str | None = None, known_sha256: str | None = None, release: dict | None = None) -> dict:
     """Add a GGUF file to the library. Returns the core's record. Importing a file that is already there returns the
     existing record (matched by content hash)."""
     src = Path(path).expanduser().resolve()
     if not src.is_file():
         raise CoreError(f"No file at {src}.")
-    if mode not in ("copy", "reference"):
-        raise CoreError("mode must be copy or reference")
+    if mode not in ("copy", "reference", "move"):
+        raise CoreError("mode must be copy, reference or move")
     try:
         info = gguf.describe(src)
     except gguf.GGUFError as e:
@@ -202,9 +202,16 @@ def import_gguf(path: str | Path, mode: str = "copy", name: str | None = None, p
     how = None
     if mode == "copy":
         how = copy_file(src, d / "model.gguf", progress)
+    elif mode == "move":        # a file Studio itself downloaded: take it into the library without a second copy
+        try:
+            os.replace(src, d / "model.gguf")
+        except OSError:
+            shutil.move(str(src), d / "model.gguf")
+        how = "moved"
     meta = {"format": "mpn-studio-core/1", "id": cid, "sha256": sha, "kind": info["kind"], "name": name or info["name"],
             "info": info, "compatibility": comp, "imported": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "source": {"file": str(src), "how": how or "reference"}, **({"reference": str(src)} if mode == "reference" else {})}
+            "source": {"file": str(src), "how": how or "reference"}, **({"reference": str(src)} if mode == "reference" else {}),
+            **({"release": release} if release else {})}
     _write_meta(cid, meta)
     return get(cid)
 

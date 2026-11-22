@@ -36,6 +36,7 @@ from mpnstudio.runtime import procedures
 from mpnstudio.store.db import Store, now, sid
 
 from .encoder import Encoder
+from .extcore import ExternalCore
 from .llama import LlamaError, LlamaServer, choose_variant, gpu_snapshot
 from .prompts import MPN_TOOLS, PROMPTS, QUESTION_PREFIX, apply_identity, render_node
 from . import toolmarkup
@@ -118,6 +119,10 @@ def _images_of(content) -> list[dict]:
     return []
 
 
+class CoreServerDown(RuntimeError):
+    """The configured core server did not accept the start-up test question."""
+
+
 class CoreAdapter:
     """Tokenizer and chat template of the loaded core, for the shared budget packer."""
 
@@ -132,10 +137,15 @@ class CoreAdapter:
 
 
 class Engine:
-    def __init__(self, root: Path, data: Path, device: str = "auto", context: int | None = None, threads: int | None = None):
+    def __init__(self, root: Path, data: Path, device: str = "auto", context: int | None = None, threads: int | None = None,
+                 core_key: str | None = None):
         self.root, self.data = Path(root), Path(data)
         man = json.loads((self.root / "MANIFEST.json").read_text()) if (self.root / "MANIFEST.json").exists() else {}
         self.manifest = man
+        # A core on a server Studio does not run (OpenAI-compatible). Its key never sits in the manifest: it comes in the
+        # environment of the runtime process (MPN_CORE_API_KEY) or from the caller.
+        self.core_endpoint: dict | None = man.get("core_endpoint")
+        self.core_key = core_key or (os.environ.get("MPN_CORE_API_KEY") if self.core_endpoint else None)
         # a model built by MPN Studio names itself; the Yaob release manifest has no identity and keeps its prompts verbatim
         self.identity: str | None = man.get("identity")
         self.model_id: str = man.get("model_id") or "yaob-c4b-n10k"
@@ -148,7 +158,7 @@ class Engine:
             self.budget.update(json.loads(saved.read_text()))
         if context:
             self.budget["context_tokens"] = int(context)
-        self.core: LlamaServer | None = None
+        self.core: LlamaServer | ExternalCore | None = None
         self.enc_srv: LlamaServer | None = None
         self.enc: Encoder | None = None
         self.store: Store | None = None
@@ -217,15 +227,25 @@ class Engine:
         # a network without a trained router (any network built in MPN Studio) is routed by retrieval instead
         self.ck = Checkpoint(ckp) if (ckp / "shards" / "shared.safetensors").exists() else None
         has_enc = self.p("encoder").exists()
-        variant, bindir, devs = choose_variant(self.p("runtime"), self.device_pref)
+        ext = self.core_endpoint
+        if ext and not has_enc:        # nothing for llama.cpp to run here: the core is on a server and there is no encoder
+            variant, bindir, devs = "remote", None, []
+        else:
+            variant, bindir, devs = choose_variant(self.p("runtime"), self.device_pref)
         self.variant, self.devices = variant, devs
         logs = self.data / "logs"
         thr = ["-t", str(self.threads)] if self.threads else []
         ctx = int(self.budget["context_tokens"])
+        if ext and ext.get("context_tokens"):
+            ctx = min(ctx, int(ext["context_tokens"]))
         n_par = int(self.budget["concurrent_requests"])
         self.loaded_ctx = ctx          # per request; the core holds ctx * n_par tokens of KV cache shared by its slots
+        if ext:
+            from urllib.parse import urlparse
+            log(f"Core: {ext.get('name') or ext['model_id']} on {urlparse(ext['base_url']).netloc}" + (f"; encoder on {variant}" if has_enc else ""))
         why = " (CPU inference, as asked)" if self.device_pref == "cpu" else " (no usable GPU found; CPU inference)"
-        log(f"Device: {variant}" + (f" ({devs[0]['name']}, {devs[0]['free_mib']} MiB free)" if devs else why))
+        if variant != "remote":
+            log(f"Device: {variant}" + (f" ({devs[0]['name']}, {devs[0]['free_mib']} MiB free)" if devs else why))
         def enc_args(gpu: bool) -> list[str]:
             return ["-m", str(self.p("encoder")), "--embedding", "--pooling", "last", "-c", "2048", "-b", "2048", "-ub", "2048", "-np", "2",
                     "-ngl", "99" if gpu else "0", *thr]
@@ -238,11 +258,11 @@ class Engine:
             # GPU: the context is fixed; --fit chooses how many layers fit in free device memory (the rest run on the CPU)
             return a + (["--fit", "on"] if gpu else ["--fit", "off", "-ngl", "0", "--no-mmproj-offload"])
 
-        order = [(variant, bindir)] + ([("cpu", self.p("runtime") / "cpu")] if variant != "cpu" else [])
+        order = [(variant, bindir)] + ([("cpu", self.p("runtime") / "cpu")] if variant not in ("cpu", "remote") else [])
         last, retried = None, set()
         while order:
             v, b = order.pop(0)
-            gpu = v != "cpu"
+            gpu = v not in ("cpu", "remote")
             pending = []
             try:
                 enc_srv = None
@@ -251,10 +271,20 @@ class Engine:
                     enc_srv = LlamaServer("encoder", b, enc_args(gpu), logs / "encoder.log", v)
                     pending = [enc_srv]
                     enc_srv.start()
-                log("Loading the cognitive core ...")
-                core = LlamaServer("core", b, core_args(gpu), logs / "core.log", v)
-                pending.append(core)
-                core.start()
+                if ext:
+                    log("Connecting to the cognitive core ...")
+                    core = ExternalCore(ext, self.core_key)
+                    try:
+                        core.start()
+                    except RuntimeError as e:
+                        raise CoreServerDown(str(e))
+                    if core.context:
+                        self.loaded_ctx = min(self.loaded_ctx, core.context)      # the server's own limit wins over a larger setting
+                else:
+                    log("Loading the cognitive core ...")
+                    core = LlamaServer("core", b, core_args(gpu), logs / "core.log", v)
+                    pending.append(core)
+                    core.start()
                 # published only once both are ready, so /health never reports a core that is still loading
                 self.enc_srv, self.enc, self.core = enc_srv, (Encoder(enc_srv) if enc_srv else None), core
                 self.variant = v
@@ -265,6 +295,8 @@ class Engine:
                 for srv in pending:
                     srv.stop()
                 self.core = self.enc_srv = self.enc = None
+                if isinstance(e, CoreServerDown):
+                    break               # a server that did not answer is not helped by another llama.cpp build
                 if "exited during start (code -" in str(e) and v not in retried:
                     # killed by a signal while loading (one SIGSEGV in llama.cpp's vocabulary loader was seen in ~20 CPU starts): retry once
                     retried.add(v)
@@ -275,7 +307,7 @@ class Engine:
         if self.core is None:
             raise RuntimeError(f"the core could not be started: {last}")
         props = self.core.props()
-        self.core_info = {"name": (self.manifest.get("core") or {}).get("name") or Path(self.p("core")).stem, "repo": (self.manifest.get("core") or {}).get("repo"),
+        self.core_info = {"name": (self.manifest.get("core") or {}).get("name") or Path(self.p("core")).stem, "server": ext["base_url"].split("//", 1)[-1].split("/", 1)[0] if ext else None, "repo": (self.manifest.get("core") or {}).get("repo"),
                           "revision": (self.manifest.get("core") or {}).get("revision"), "quantization": (self.manifest.get("core") or {}).get("quantization"),
                           "n_ctx": (props.get("default_generation_settings") or {}).get("n_ctx"), "modalities": props.get("modalities"),
                           "build": props.get("build_info")}
@@ -752,8 +784,8 @@ class Engine:
                 timings = ch["timings"]
             for c in ch.get("choices", []):
                 d = c.get("delta") or {}
-                if d.get("reasoning_content"):
-                    yield "reasoning", d["reasoning_content"]
+                if d.get("reasoning_content") or d.get("reasoning"):          # llama.cpp / vLLM spell it differently
+                    yield "reasoning", d.get("reasoning_content") or d["reasoning"]
                 if d.get("content"):
                     yield "content", d["content"]
                 for tc in d.get("tool_calls") or []:

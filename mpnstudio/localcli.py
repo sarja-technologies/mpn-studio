@@ -7,11 +7,18 @@
   mpn verify MODEL.mpn          check every member against its SHA-256
 
   mpn core list | import FILE.gguf [--reference] [--name N] [--projector-for ID] | import-hf FOLDER [--outtype q8_0] | show ID | remove ID
-  mpn network list | create NAME | import-yaob FOLDER | import-store FILE NAME | duplicate ID NAME
+  mpn core add-server NAME --url http://HOST:PORT/v1 --model-id ID [--api-key-env VAR | --api-key-stdin] [--context N] [--max-output N]
+                           a core on any OpenAI-compatible server (llama.cpp, vLLM, Ollama, hosted); its key is never printed
+  mpn core test SERVER_ID | servers | remove-server SERVER_ID
+  mpn network list | create NAME | import-yaob FOLDER | import-mpn FILE.mpn [NAME] | import-fgmpn FOLDER [--copy] | import-store FILE NAME | duplicate ID NAME
               | specialise ID NAME [--mpn ID ...] [--q TEXT] [--type T] | merge TARGET SOURCE [--both] | compare A B | stats ID
               | delete-nodes ID [--mpn ID ...] [--q TEXT] [--all] [--yes]
-  mpn model list | create NAME --core ID --network ID [--encoder ID] | show ID | set ID key=value ... | build ID [--device D]
+  mpn model list | create NAME --core ID|endpoint:SERVER_ID --network ID [--encoder ID] | show ID | set ID key=value ... | build ID [--device D]
+            | rebind ID          apply a changed core without rebuilding the network snapshot
             | export ID DEST [--lightweight] | test ID "question"
+
+  mpn catalogue list [--kind mpn|core|model] | refresh | url | import FILE | install ID [--version V] [--format QUANT] [--server SERVER_ID]
+  mpn release list | verify ID VERSION | remove KIND ID VERSION       what is installed from the catalogue
 
 Data lives in the same folders as the desktop app (~/.local/share/mpn-studio).
 """
@@ -24,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-LOCAL = {"run", "info", "verify", "core", "network", "model", "serve-root"}
+LOCAL = {"run", "info", "verify", "core", "network", "model", "serve-root", "catalogue", "release"}
 
 
 def _progress():
@@ -136,6 +143,27 @@ def cmd_core(a):
         _out(cores.get(a.arg))
     elif a.action == "remove":
         _out(cores.remove(a.arg))
+    elif a.action in ("add-server", "test", "servers", "remove-server"):
+        from .library import coreconf
+        if a.action == "servers":
+            for c in coreconf.list_servers():
+                t = c.get("last_test") or {}
+                print(f"{c['id']:<24} {c['base_url']:<44} {c['model_id']:<28} key: {c['key_source'] or 'none':<22} {('ok' if t.get('ok') else t.get('code')) if t else 'not tested'}")
+        elif a.action == "add-server":
+            key = sys.stdin.readline().strip() if a.api_key_stdin else None
+            body = {"name": a.arg, "base_url": a.url, "model_id": a.model_id, "context_tokens": a.context, "max_output_tokens": a.max_output,
+                    "api_key_env": a.api_key_env}
+            if key:
+                body["api_key"] = key
+            _out(coreconf.save(body))
+        elif a.action == "test":
+            r = coreconf.test_saved(a.arg)
+            print(("ok: " if r["ok"] else f"{r['code']}: ") + r["message"] + (f"  ({r['latency_ms']} ms)" if r.get("latency_ms") is not None else ""))
+            for w in r.get("warnings") or []:
+                print("note:", w)
+            sys.exit(0 if r["ok"] else 1)
+        else:
+            _out(coreconf.remove(a.arg))
 
 
 # ------------------------------------------------------------------------------------------- networks
@@ -150,6 +178,11 @@ def cmd_network(a):
             print(f"{n['id']:<28} {n.get('nodes', '?'):>8} nodes  {n.get('mpns', '?'):>3} MPNs  {'router' if n.get('router') else '      '}  {n['name']}")
     elif a.action == "create":
         _out(networks.create(ar[0]))
+    elif a.action == "import-mpn":
+        _out(networks.import_mpn_network(ar[0], ar[1] if len(ar) > 1 else None, _progress()))
+    elif a.action == "import-fgmpn":
+        from .catalogue import install
+        _out(install.install_local_fgmpn(ar[0], ar[1] if len(ar) > 1 else None, a.copy, lambda l, d, t: sys.stderr.write(f"\r{l[:50]:<50} {100 * d / max(t, 1):5.1f} %")))
     elif a.action == "import-yaob":
         _out(networks.import_yaob_release(ar[0], ar[1] if len(ar) > 1 else "Yaob N10K"))
     elif a.action == "import-store":
@@ -214,6 +247,9 @@ def cmd_model(a):
     elif a.action == "build":
         m = models.build(ar[0], log=lambda s: print(s, file=sys.stderr), device=a.device)
         _out({"status": m["status"], "build": m["build"]})
+    elif a.action == "rebind":
+        m = models.rebind(ar[0], log=lambda s: print(s, file=sys.stderr), device=a.device)
+        _out({"status": m["status"], "build": m["build"]})
     elif a.action == "export":
         _out(runner.export(ar[0], ar[1], "lightweight" if a.lightweight else "complete", _progress()))
     elif a.action == "test":
@@ -226,6 +262,68 @@ def cmd_model(a):
                                             show_thinking=False))
         finally:
             run.stop()
+
+
+def _task_progress():
+    last = [0.0]
+
+    def p(label, done, total):
+        if time.time() - last[0] > 0.4 or done >= total:
+            last[0] = time.time()
+            sys.stderr.write(f"\r{label[:48]:<48} {100 * done / max(total, 1):5.1f} %  ({done / 1e6:,.1f} of {total / 1e6:,.1f} MB)   ")
+            sys.stderr.flush()
+    return p
+
+
+def cmd_catalogue(a):
+    from .catalogue import install, manifest, source
+    ar = a.args
+    if a.action == "url":
+        print(source.url())
+    elif a.action == "refresh":
+        r = source.refresh()
+        print(f"{r['releases']} releases from {r['url']}" + (f"; skipped {len(r['skipped'])}" if r["skipped"] else ""))
+    elif a.action == "import":
+        _out(source.import_file(ar[0]))
+    elif a.action == "list":
+        c = source.load()
+        print(f"catalogue {c['source']['url']}" + ("" if c["source"]["fetched_at"] else "  (not fetched yet: `mpn catalogue refresh`)"))
+        for r in c["releases"]:
+            if a.kind and r["kind"] != a.kind:
+                continue
+            inst = install.get_installed(r["kind"], r["id"], r["version"])
+            flag = "installed" if inst else ("INVALID" if r["problems"] else ("incompatible" if r["compat"]["reasons"] else ""))
+            print(f"{r['kind']:<6} {r['id']:<30} {r['version']:<9} {r['totals']['download_bytes'] / 1e9:8.2f} GB  {(r['licence']['spdx'] or '?'):<14} {flag}")
+    elif a.action == "install":
+        r = source.find(a.kind, ar[0], a.version)
+        if not r:
+            raise SystemExit(f"error: {ar[0]} is not in the catalogue. `mpn catalogue refresh`, or `mpn catalogue import FILE`.")
+        pr = _task_progress()
+        try:
+            rec = install.install_model(r, pr, None, a.server, a.format) if r["kind"] == "model" else install.install(r, pr, None, a.format)
+        except (install.InstallError, source.CatalogueError) as e:
+            raise SystemExit(f"error: {e}")
+        except Exception as e:
+            if type(e).__name__ == "DownloadError":
+                raise SystemExit(f"error: {e}")
+            raise
+        sys.stderr.write("\n")
+        _out(rec)
+
+
+def cmd_release(a):
+    from .catalogue import install
+    ar = a.args
+    if a.action == "list":
+        for r in install.installed():
+            print(f"{r['kind']:<5} {r['id']:<30} {r['version']:<16} {r.get('format') or '':<12} {r.get('nodes') or '':>10}  {'verified ' + r['verified_at'] if r.get('verified_at') else ''}")
+    elif a.action == "verify":
+        v = install.verify_installed(ar[0] if len(ar) == 3 else "mpn", ar[-2], ar[-1], _task_progress())
+        sys.stderr.write("\n")
+        print("All files match." if v["ok"] else "PROBLEMS:\n  " + "\n  ".join(v["problems"]))
+        sys.exit(0 if v["ok"] else 1)
+    elif a.action == "remove":
+        _out(install.uninstall(ar[0], ar[1], ar[2]))
 
 
 def main(argv: list[str]) -> None:
@@ -260,7 +358,13 @@ def main(argv: list[str]) -> None:
     s.add_argument("--context", type=int)
     s.set_defaults(fn=cmd_serve_root)
     c = sub.add_parser("core")
-    c.add_argument("action", choices=["list", "import", "import-hf", "show", "remove"])
+    c.add_argument("action", choices=["list", "import", "import-hf", "show", "remove", "add-server", "test", "servers", "remove-server"])
+    c.add_argument("--url")
+    c.add_argument("--model-id")
+    c.add_argument("--api-key-env")
+    c.add_argument("--api-key-stdin", action="store_true", help="read the key from standard input (never from the command line)")
+    c.add_argument("--context", type=int)
+    c.add_argument("--max-output", type=int)
     c.add_argument("arg", nargs="?")
     c.add_argument("--reference", action="store_true", help="do not copy; keep the file where it is")
     c.add_argument("--name")
@@ -268,7 +372,8 @@ def main(argv: list[str]) -> None:
     c.add_argument("--outtype", default="q8_0")
     c.set_defaults(fn=cmd_core)
     n = sub.add_parser("network")
-    n.add_argument("action", choices=["list", "create", "import-yaob", "import-store", "duplicate", "specialise", "merge", "compare", "stats", "delete-nodes"])
+    n.add_argument("action", choices=["list", "create", "import-yaob", "import-store", "import-mpn", "import-fgmpn", "duplicate", "specialise", "merge", "compare", "stats", "delete-nodes"])
+    n.add_argument("--copy", action="store_true", help="import-fgmpn: copy the store into Studio's folder instead of using it where it is")
     n.add_argument("args", nargs="*")
     n.add_argument("--mpn", action="append")
     n.add_argument("--q")
@@ -278,7 +383,7 @@ def main(argv: list[str]) -> None:
     n.add_argument("--yes", action="store_true")
     n.set_defaults(fn=cmd_network)
     m = sub.add_parser("model")
-    m.add_argument("action", choices=["list", "create", "show", "set", "build", "export", "test"])
+    m.add_argument("action", choices=["list", "create", "show", "set", "build", "rebind", "export", "test"])
     m.add_argument("args", nargs="*")
     m.add_argument("--core")
     m.add_argument("--network")
@@ -287,12 +392,24 @@ def main(argv: list[str]) -> None:
     m.add_argument("--lightweight", action="store_true")
     m.add_argument("--json", action="store_true")
     m.set_defaults(fn=cmd_model)
+    ct = sub.add_parser("catalogue", help="official releases")
+    ct.add_argument("action", choices=["list", "refresh", "url", "import", "install"])
+    ct.add_argument("args", nargs="*")
+    ct.add_argument("--kind", choices=["mpn", "core", "model"])
+    ct.add_argument("--version")
+    ct.add_argument("--format", help="for a core: the quantisation or file to download")
+    ct.add_argument("--server", help="for a pairing: use this configured core server instead of downloading the core")
+    ct.set_defaults(fn=cmd_catalogue)
+    rl = sub.add_parser("release", help="installed releases")
+    rl.add_argument("action", choices=["list", "verify", "remove"])
+    rl.add_argument("args", nargs="*")
+    rl.set_defaults(fn=cmd_release)
     a = ap.parse_args(argv)
     try:
         a.fn(a)
     except KeyboardInterrupt:
         sys.exit(130)
     except Exception as e:      # library errors carry a message meant for the user
-        if type(e).__name__ in ("CoreError", "ModelError", "RunError", "MpnFileError", "ProjectError", "GGUFError"):
+        if type(e).__name__ in ("CoreError", "ModelError", "RunError", "MpnFileError", "ProjectError", "GGUFError", "CoreServerError", "InstallError", "CatalogueError", "DownloadError", "FgError"):
             raise SystemExit(f"error: {e}")
         raise

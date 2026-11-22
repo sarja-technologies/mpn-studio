@@ -1,5 +1,61 @@
 # Acceptance evidence
 
+## MPN Studio 0.5.0 (23 November 2026)
+
+What was built and what was tested, exactly. Packages: `mpn-studio_0.5.0_amd64.deb` (771cbd7f...), `MPN-Studio_0.5.0_x86_64.AppImage`
+(067f8e46...), `mpn-studio_0.5.0_arm64.deb` (1164e706...), `MPN-Studio_0.5.0_aarch64.AppImage` (f809b4cf...); full checksums in the
+release's `SHA256SUMS-x86_64` and `SHA256SUMS-aarch64`. The x86-64 packages were built on Ubuntu 26.04 (Python 3.14), the ARM64
+packages natively on the NVIDIA DGX Spark (Ubuntu 24.04, Python 3.12). `scripts/release-build.sh` runs the tests (245 pass, 30 need
+torch and are skipped) before building; both builds did.
+
+Run by `scripts/release-acceptance.py` against the packaged backend, headless, in an empty home folder, against the live catalogue
+(https://fylu.me/api/catalogue.json) and the public Hugging Face packages. **34 of 34 checks passed on x86-64 and 34 of 34 on ARM64.**
+
+| Step | x86-64 (.deb unpacked with `dpkg-deb -x`, backend run from it) | ARM64 (.deb unpacked the same way, on the DGX Spark) |
+|---|---|---|
+| FG-MPN runtime in the package | fgmpn 0.2.2, native reader | fgmpn 0.2.2, native reader |
+| Live catalogue | 7 releases; both N10K networks and both GGUF cores installable | the same |
+| Public N10K packages (`yaob-next-n10k` 0.2.0, `yaob-n10k` 0.1.0), FG-MPN payload | installed in 6 s and 8 s, every file and segment verified (size and SHA-256); explorer: 10,007 and 10,000 validated nodes, 18 domains, search, a node with its relationships, the canvas graph, paging, counts, storage | the same |
+| Python engine against the native reader | the same search results | the same |
+| Pairing `N10K-C4B` from the three pinned Hugging Face repositories (network Studio payload, encoder, core) | with the core on a server (llama.cpp on the Spark, Qwen3.5-4B Q8_0) | with its own core, the pinned `Qwen3.5-4B-Q8_0.gguf`, run by the package's llama.cpp (CPU) |
+| Build and test question | built in 15 s; the network's hash `84afc1852c9d7ae3` | built in 17 s; hash `84afc1852c9d7ae3` |
+| "Which city is the capital of Australia?" | "The capital of Australia is Canberra [1]. Sources: [1] Canberra" (10 tokens, 12.8 s) | "Based on the knowledge nodes provided, **Canberra** is the capital of Australia. ... Sources: [1] Canberra; [3] Melbourne" (71 tokens, 17.5 s, 4.1 tokens/s) |
+| Core changed to a second server (llama.cpp, Qwen3-4B-Instruct-2507 Q8_0), Apply core | 22 s; network hash `84afc1852c9d7ae3` before and after; same revision | 27 s; hash unchanged |
+| Same question, second core | "The capital of Australia is Canberra [1]. Sources: [1] Canberra" (10 tokens, 28.7 s) | the same answer text (10 tokens, 28.9 s) |
+
+The pinned files: network Studio store `deeb2437...` (`yaob-next-n10k` at `71fd15b4`), core `51ee133b...`, encoder `e8e9d93c...`. A run of the same script on an earlier x86-64
+build (before the last three fixes below) scored 33 of 34: the first answer did not carry the "Sources" line (a 4B core does not always write it), and the check
+then required it. The check now requires the answer to contain the fact and reports whether the line is there; the run on the final packages, with the relaxed check, cited in both answers.
+
+**The window.** `scripts/window-acceptance.sh` on the x86-64 AppImage in a real 1440x900 X11 window (Xvfb, synthesized mouse and keyboard):
+**17 of 17.** The network it links by address and forks is the Yaob N10K FG-MPN store served by the package's own `fgmpn-serve` (the Origin
+server was not available); `SEARCH` and `NODES_RE` adapt the script's checks to it. A first run scored 16 of 17 because the copied 0.4 project folder
+was named differently from its slug, which the check looks for. Also in the window, by hand: Settings, Releases (7 releases, FG-MPN runtime 0.2.2),
+Model library, MPN networks (Yaob Next N10K installed from the catalogue, FG-MPN 0.2.2), Explore, the domain map, a search for Canberra, its
+node with relationships and the "Derived from stored facts" and "Stored in FG-MPN" sections ([screenshots](acceptance/0.5.0)).
+
+**0.4.1 data.** A copy of a real 0.4.1 data folder (Yaob N10K with 10,155 nodes, the Yaob Origin N119M link, its fork) opened in the 0.5.0
+backend: all four projects listed, N10K searched ("photosynthesis"), Origin connected through its local pack (119,176,842 nodes). The projects'
+`project.json` and `store.sqlite` files had the same SHA-256 before and after; only SQLite's `-shm` and `-wal` side files went away.
+
+**Defects the live data and the packaged app showed, fixed before release** (each has a test):
+- The published Yaob N10K packages keep the FG-MPN store in `store/`; Studio looked for `CURRENT` at the root and refused the payload.
+- Pinned manifests cannot name their own commit (revision null) and a pairing imported before its repository exists has none; both were refused.
+- The saved live-catalogue test data was never committed (the `data/` ignore rule).
+- The FG-MPN reader was left running when the app quit or the service was killed; it now stops with the service and leaves when its parent is gone.
+- The node panel showed "Stored record from" with no dataset, and installed networks showed "not stated" for a licence the catalogue gives as text.
+
+**Not tested.** The ARM64 AppImage and .deb were not run in a window (no display on the DGX Spark); the AppImage was run only as `mpn`
+(catalogue refresh and list) and the .deb's backend headless. No `apt install` of either .deb. CUDA and Vulkan inference of the 0.5.0 packages,
+other distributions, AMD and Intel GPUs, Windows and macOS (no builds exist). The pairing with a local core was run on ARM64 only, with a
+server core on x86-64 only. The reader does not list derived statements for a node and offers no comparison with an original network (the public
+FG-MPN runtime has no explainer). The core servers used were on the Spark (reached through an SSH tunnel for x86-64). The packages are not signed.
+
+![Installed FG-MPN network and official networks](acceptance/0.5.0/releases-installed-fgmpn-1440.png)
+![A published N10K network as domains](acceptance/0.5.0/fgmpn-explorer-domains-1440.png)
+![A node and its neighbours](acceptance/0.5.0/fgmpn-explorer-node-1440.png)
+![The node panel](acceptance/0.5.0/fgmpn-node-panel-1440.png)
+
 ## MPN Studio 0.4.1 (14 November 2026)
 
 Fixes the canvas for large networks: opening Yaob Origin N119M showed one circle per domain that only grew when zoomed,

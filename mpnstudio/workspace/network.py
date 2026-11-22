@@ -46,6 +46,8 @@ def known_for(pack_ids: list[str]) -> tuple[str, dict] | None:
 def describe_source(src: dict) -> str:
     if src.get("label"):
         return src["label"]
+    if src["mode"] == "fgmpn":
+        return "FG-MPN network " + src["target"]
     return "Network address " + src["target"] if src["mode"] == "remote" else "Folder " + src["target"]
 
 
@@ -53,6 +55,11 @@ def probe_source(src: dict, timeout: float = 4.0) -> dict:
     """Is this source usable right now? Cheap: a folder check, or one overview request."""
     t = time.perf_counter()
     try:
+        if src["mode"] == "fgmpn":
+            from ..mpnnet import fgmpn_local
+            info = fgmpn_local.inspect_store(src["target"])
+            return {"available": info["ok"], "ms": round((time.perf_counter() - t) * 1000, 1),
+                    "reason": None if info["ok"] else "The store is incomplete: " + "; ".join((info["missing"] + info["wrong_size"])[:2]) + "."}
         if src["mode"] == "local":
             p = Path(src["target"])
             ok = (p / "parts" / "p00.sqlite").exists() or (p / "p00.sqlite").exists()
@@ -125,7 +132,14 @@ class Workspace:
             s = self.sources[i]
             t = time.perf_counter()
             try:
-                c = Remote(s["target"]) if s["mode"] == "remote" else Local(s["target"])
+                if s["mode"] == "fgmpn":     # a store folder on this computer: Studio serves it read-only on a loopback port
+                    from ..mpnnet import fgmpn_local
+                    try:
+                        c = Remote(fgmpn_local.serve(s["target"]))
+                    except fgmpn_local.FgError as e:
+                        raise NetError(str(e), e.status)
+                else:
+                    c = Remote(s["target"]) if s["mode"] == "remote" else Local(s["target"])
             except NetError as e:
                 status[i].update(available=False, reason=str(e))
                 continue
@@ -193,6 +207,21 @@ class Workspace:
             if e.status == 404:
                 return None
             raise
+
+    # ------------------------------------------------------------------ FG-MPN
+    FG_PATHS = re.compile(r"^(about|storage|resolve|node/[0-9a-f]{32}(/compare)?)$")
+
+    def fgmpn(self, path: str, params: dict | None = None) -> dict:
+        """FG-MPN's own routes of the open source, when it is an FG-MPN network (its overview says engine "fgmpn").
+        Read-only. In a fork these describe the original network, not the fork's changes."""
+        if not self.FG_PATHS.match(path):
+            raise NetError("Unknown FG-MPN query.", 404)
+        c = self.need()
+        t = time.perf_counter()
+        try:
+            return c.fgmpn(path, params or {})
+        finally:
+            self.last_ms = round((time.perf_counter() - t) * 1000, 1)
 
     # ------------------------------------------------------------------ merged reads
     def overview(self) -> dict:

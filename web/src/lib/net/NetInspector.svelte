@@ -3,6 +3,8 @@
   import { errText, fmtBytes, fmtInt, get } from '../api';
   import { app } from '../state.svelte';
   import Icon from '../ui/Icon.svelte';
+  import FgNetwork from './FgNetwork.svelte';
+  import FgNode from './FgNode.svelte';
   import NetSources from './NetSources.svelte';
   import NodeEdit from './NodeEdit.svelte';
   import { net, word, type Rel } from './net.svelte';
@@ -159,6 +161,8 @@
         </section>
       {/if}
 
+      {#if ov?.engine === 'fgmpn' && !n.edited && /^[0-9a-f]{32}$/.test(n.id)}<FgNode id={n.id} />{/if}
+
       <section class="sec">
         <h3>Identifiers</h3>
         <dl class="kv">
@@ -217,6 +221,7 @@
           {#if ov.version}<dt>Version</dt><dd>{ov.version}</dd>{/if}
         </dl>
       </section>
+      {#if ov.engine === 'fgmpn'}<FgNetwork />{/if}
       {#if ov.datasets?.length}
         <section class="sec">
           <h3>Datasets</h3>

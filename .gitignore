@@ -6,6 +6,7 @@ node_modules/
 web/dist/
 data/
 !mpnstudio/library/data/
+!tests/data/
 runs/
 *.sqlite
 *.sqlite-wal

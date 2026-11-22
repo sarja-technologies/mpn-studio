@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from ..desktop import paths as dpaths
 from ..desktop import projects as dprojects
-from ..library import cores, models, mpnfile, networks, runner
+from ..library import coreconf, cores, models, mpnfile, networks, runner
 from ..store import netops
 from ..store.db import sid
 
@@ -43,7 +43,7 @@ class Task:
     def view(self) -> dict:
         return {"id": self.id, "kind": self.kind, "title": self.title, "state": self.state, "progress": self.progress,
                 "log": self.log[-40:], "result": self.result, "error": self.error, "started": self.started, "finished": self.finished,
-                "cancellable": self.kind in ("bulk-delete", "build", "bench", "network-install")}
+                "cancellable": self.kind in ("bulk-delete", "build", "bench", "network-install", "release-install")}
 
 
 TASKS: dict[str, Task] = {}
@@ -89,8 +89,11 @@ def register(app: FastAPI, get_store: Callable, open_project: Callable[[str], No
     @app.get("/api/library/overview")
     def overview():
         from ..engine.runtime import available
+        from ..catalogue import install
+        from . import catalogue_routes
         return {"models": models.list_models(), "cores": cores.list_cores(), "networks": networks.list_networks(), "runtime": available(),
-                "runs": runner.RUNS.status(), "opened": _opened_list(), "open_network": current_project()}
+                "runs": runner.RUNS.status(), "opened": _opened_list(), "open_network": current_project(),
+                "core_servers": coreconf.list_servers(), "releases": [{k: v for k, v in r.items() if k != "hosting"} for r in install.installed()]}
 
     # -------------------------------------------------------------------------------- tasks
     @app.get("/api/library/tasks")

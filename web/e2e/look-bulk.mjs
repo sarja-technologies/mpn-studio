@@ -12,7 +12,7 @@ const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
 const logs = [];
 p.on('pageerror', (e) => logs.push('PAGEERROR: ' + e.message));
 await p.goto(base);
-await p.getByRole('button', { name: 'Node networks' }).click();
+await p.getByRole('button', { name: 'MPN networks' }).click();
 await p.getByRole('row', { name: /Bulk delete test copy/ }).getByRole('button', { name: 'Edit' }).click();
 await p.getByRole('combobox', { name: 'Search nodes' }).waitFor({ timeout: 30000 });
 await p.waitForTimeout(1500);

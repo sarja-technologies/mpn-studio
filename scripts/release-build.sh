@@ -18,6 +18,9 @@ echo "== 1/6 python build environment"
 .venv-build/bin/pip install -q -U pip
 .venv-build/bin/pip install -q "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27" "pydantic>=2.7" "orjson>=3.10" "numpy>=2.0" "psutil>=6.0" pytest pyinstaller
 
+echo "== FG-MPN runtime (public wheel for this machine, bundled; sha256-pinned)"
+./scripts/fetch-fgmpn.sh "$ARCH"
+
 echo "== 2/6 tests"
 .venv-build/bin/python -m pytest tests -q
 

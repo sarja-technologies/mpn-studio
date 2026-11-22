@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
-from . import cores, models, mpnfile
+from . import coreconf, cores, models, mpnfile
 from ..desktop import paths
 
 Progress = Callable[[str, int, int], None]
@@ -72,6 +72,9 @@ def export(mid: str, dest: str | Path, mode: str = "complete", progress: Progres
     m = models.get(mid)
     if m["status"]["state"] != "ready":
         raise RunError("Build the model (and let its test pass) before exporting. " + " ".join(m["status"]["problems"]), 409)
+    if (m.get("core") or {}).get("endpoint_id"):
+        raise RunError("This pairing answers with a core on a server, so there are no weights to put in a .mpn file. "
+                       "Choose a core Studio serves (a GGUF in the library), then export.", 409)
     root = models.build_root(mid)
     rm = json.loads((root / "MANIFEST.json").read_text())
     build = json.loads((root / "build.json").read_text())
@@ -243,6 +246,15 @@ class Run:
         if context:
             cmd += ["--context", str(context)]
         env = dict(os.environ, MPN_API_KEY=self.api_key)
+        env.pop(coreconf.KEY_ENV, None)
+        try:                  # a core on a server: its key goes to this process in the environment, never into a file
+            ce = json.loads((root / "MANIFEST.json").read_text()).get("core_endpoint")
+        except (OSError, ValueError):
+            ce = None
+        if ce:
+            key = coreconf.api_key(ce["id"])
+            if key:
+                env[coreconf.KEY_ENV] = key
         self.proc = subprocess.Popen(cmd, stdout=log.open("ab"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env, start_new_session=True)
         self.started = time.time()
 

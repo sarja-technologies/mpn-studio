@@ -74,6 +74,29 @@ software, redistributed under the NVIDIA CUDA Toolkit End User License Agreement
 components): <https://docs.nvidia.com/cuda/eula/index.html>. They are not covered by the Apache License. Each `cuda`
 folder carries `NVIDIA-NOTICE.txt`. The NVIDIA driver itself is not included.
 
+## FG-MPN runtime (bundled in the local backend)
+
+The backend carries the **FG-MPN runtime 0.2.2**, the `fgmpn` package, so that FG-MPN networks open without any
+other software. It is made by Fylume and published at <https://github.com/sarja-technologies/fgmpn> under the
+**Fylume Source-Available Terms 1.0** (the text of the Apache License 2.0 plus the Fylume No-Resale Condition 1.0). That
+licence is not the Apache License and is not an open-source licence as the OSI defines it; it allows use, modification
+and redistribution but not resale, and requires its NOTICE to be kept. MPN Studio's own code stays under Apache-2.0.
+
+| Machine | Wheel bundled (unmodified, SHA-256 checked by `scripts/fetch-fgmpn.sh`) |
+|---|---|
+| x86-64 | `fgmpn-0.2.2-cp312-abi3-manylinux_2_17_x86_64.whl` (Python package and native reader), SHA-256 `2bd8b6dc821b0eebfc915cc4999ac2adf3b822ccf61a736c882b7af0b2863284` |
+| ARM64 | `fgmpn-0.2.2-cp312-abi3-manylinux_2_34_aarch64.whl` (Python package and native reader), SHA-256 `5823b11281bb33813babe423c7ad44558832c712c9d2fb37092272e1958b7bbd` |
+
+The runtime's `LICENSE`, `NOTICE`, `THIRD-PARTY.md` and the notices of what its native reader contains (28 Rust crates under
+MIT, Apache-2.0, BSD-3-Clause, Unlicense or Zlib terms; the Rust standard library, MIT OR Apache-2.0; on x86-64 also zlib and the zig compiler
+runtime, MIT with LLVM-derived parts under Apache-2.0 with the LLVM exception) are installed with the app in
+`licenses/fgmpn/` next to the other notices (`.deb`: `/usr/lib/MPN Studio/licenses/fgmpn/`; AppImage: `usr/lib/MPN Studio/licenses/fgmpn/` inside the image). The
+runtime has no required third-party Python dependency. `orjson`, which the runtime can use when present, is already part of the
+backend (below).
+
+The runtime has no network server: Studio's own reader (`mpnstudio/mpnnet/fgmpn_net.py`, Apache-2.0) serves a store on a
+loopback port with it. The data of an FG-MPN network is not part of the app and has its own licence (the Yaob N10K store: CC BY-SA 4.0).
+
 ## Local backend (frozen with PyInstaller)
 
 The desktop app starts a bundled Python backend. It contains CPython (PSF-2.0; 3.14 in the x86-64 build, 3.12 in the
@@ -118,6 +141,7 @@ and OpenBLAS (BSD-3-Clause, in `numpy.libs`). GNU Readline is excluded from the 
 - **Model weights.** Cognitive cores and encoders (GGUF files such as Qwen3.5-4B) are separate works under their
   publishers' licences. MPN Studio imports the ones you give it; a model's `.mpn` file records the core's licence and
   carries the notices you exported with it.
+- **FG-MPN network data, and Studio's networks.** Downloaded by you from the Releases view; each carries its own licence.
 - **Python packages for the optional PyTorch runtime and for converting Hugging Face models.** You install these
   yourself into the Python environment you choose in Settings, Compute: `torch`, `transformers`, `accelerate`,
   `safetensors`, `peft`, `huggingface_hub`, `nvidia-ml-py`, `sentencepiece`, under their own licences (mostly

@@ -4,13 +4,13 @@
 
 | Machine | Files |
 |---|---|
-| x86-64 (Intel, AMD) | `mpn-studio_0.2.0_amd64.deb` or `MPN-Studio_0.2.0_x86_64.AppImage` |
-| ARM64 (NVIDIA DGX Spark and other ARMv8.2+ Linux machines) | `mpn-studio_0.2.0_arm64.deb` or `MPN-Studio_0.2.0_aarch64.AppImage` |
+| x86-64 (Intel, AMD) | `mpn-studio_0.5.0_amd64.deb` or `MPN-Studio_0.5.0_x86_64.AppImage` |
+| ARM64 (NVIDIA DGX Spark and other ARMv8.2+ Linux machines) | `mpn-studio_0.5.0_arm64.deb` or `MPN-Studio_0.5.0_aarch64.AppImage` |
 
-    sudo apt install ./mpn-studio_0.2.0_amd64.deb      # menu entry "MPN Studio"; commands: mpn-studio, mpn
+    sudo apt install ./mpn-studio_0.5.0_amd64.deb      # menu entry "MPN Studio"; commands: mpn-studio, mpn
     # or, without root:
-    chmod +x MPN-Studio_0.2.0_x86_64.AppImage && ./MPN-Studio_0.2.0_x86_64.AppImage
-    ./MPN-Studio_0.2.0_x86_64.AppImage mpn run Model.mpn --chat      # the mpn command from the AppImage
+    chmod +x MPN-Studio_0.5.0_x86_64.AppImage && ./MPN-Studio_0.5.0_x86_64.AppImage
+    ./MPN-Studio_0.5.0_x86_64.AppImage mpn run Model.mpn --chat      # the mpn command from the AppImage
 
 The `.deb` needs `libwebkit2gtk-4.1-0` and `libgtk-3-0` (it declares them). No Node.js and no Python are needed.
 GPU inference uses the NVIDIA driver (CUDA) or a Vulkan driver (x86-64) that is already installed; without one, models
@@ -20,7 +20,7 @@ run on the CPU. Remove with `sudo apt remove mpn-studio`; your library in `~/.lo
 
 The release script builds for the machine it runs on:
 
-    scripts/release-build.sh      # tests -> web -> frozen backend -> llama.cpp runtime -> .deb + .AppImage -> dist-desktop/
+    scripts/release-build.sh      # FG-MPN runtime -> tests -> web -> frozen backend -> llama.cpp runtime -> .deb + .AppImage -> dist-desktop/
 
 Build machine needs: Rust >= 1.80 with the Tauri 2 CLI (from `pnpm install`, or `cargo install tauri-cli --version 2.12.4
 --locked`), Python >= 3.12 with venv, `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev patchelf rsync
@@ -31,7 +31,8 @@ never needs the internet.
 Individual steps:
 
     cd web && pnpm build                         # the interface (the same files on every architecture)
-    scripts/build-backend.sh                     # frozen backend in build/backend/
+    scripts/fetch-fgmpn.sh [x86_64|aarch64]      # the public FG-MPN wheel for this machine into .venv-build (sha256-pinned), notices in build/fgmpn-licenses/
+    scripts/build-backend.sh                     # frozen backend in build/backend/ (carries the FG-MPN runtime)
     scripts/fetch-runtime.sh [x86_64|aarch64]    # llama.cpp b12318 in runtime/ (cpu, vulkan, cuda on x86-64; cpu, cuda on ARM64)
     scripts/build-llama-cuda.sh                  # ARM64 only: replace the CUDA variant with a source build (below)
     pnpm tauri build --bundles deb,appimage
@@ -40,7 +41,7 @@ Development without packaging: `pnpm tauri build --debug --no-bundle`, then
 `MPN_DEV_PYTHON=.venv-build/bin/python MPN_DEV_ROOT=$PWD src-tauri/target/debug/mpn-studio` (runs the source backend;
 `runtime/` must be filled by `scripts/fetch-runtime.sh`).
 
-Tests: `.venv-build/bin/python -m pytest tests -q` (96 pass; 29 need torch and are skipped).
+Tests: `.venv-build/bin/python -m pytest tests -q` (245 pass; 30 need torch and are skipped; with the FG-MPN wheel installed by `scripts/fetch-fgmpn.sh` the FG-MPN reader tests run).
 `scripts/offline-acceptance.sh` runs the installed app with no network (needs `bwrap`, `strace`, `Xvfb`, `xdotool`,
 ImageMagick).
 

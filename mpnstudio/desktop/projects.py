@@ -219,7 +219,7 @@ def create_linked(name: str, sources: list[dict], identity: dict, description: s
     name = (name or "").strip() or identity.get("name") or "Linked network"
     clean = []
     for s in sources:
-        if s.get("mode") not in ("local", "remote") or not s.get("target"):
+        if s.get("mode") not in ("local", "remote", "fgmpn") or not s.get("target"):
             raise ProjectError("Each source needs a folder or a network address.")
         clean.append({"mode": s["mode"], "target": str(s["target"]).strip(), "label": (s.get("label") or "").strip() or None})
     if not clean:

@@ -14,6 +14,7 @@ import httpx
 API = "mpn-network/1"
 OPS = {"overview", "search", "browse"}
 PARAMS = {"q", "kind", "domain", "dataset", "page", "limit", "cursor", "boundary", "direction", "rel", "offset"}
+FG_PARAMS = {"address"}
 
 
 class NetError(Exception):
@@ -136,6 +137,9 @@ class Local:
                     tot[key] = tot.get(key, 0) + int(n)
         return {"rows": [{"kind": k, "dataset": ds, "nodes": n} for (k, ds), n in tot.items() if n > 0]}
 
+    def fgmpn(self, path: str, params: dict) -> dict:
+        raise NetError("This network is not an FG-MPN network.", 501)
+
     def close(self):
         self.pool.shutdown(wait=False, cancel_futures=True)
         for _p, st in self.reader.fed.packs:
@@ -182,6 +186,23 @@ class Remote:
     def facets(self, domain: str | None, kind: str | None) -> dict:
         # the network API (mpn-network/1) reports counts by domain, by kind and by dataset, but not combined
         raise NetError("This source does not report node counts inside a domain.", 501)
+
+    def fgmpn(self, path: str, params: dict) -> dict:
+        """FG-MPN's own read-only routes (`fgmpn-network/1`, served by `python -m fgmpn.netserve` next to the network API):
+        why a node exists, derived statements with proofs, address resolution, storage. GET only, like the network API."""
+        q = {k: v for k, v in params.items() if k in FG_PARAMS and v not in (None, "")}
+        try:
+            r = self.client.get(f"{self.base}/api/fgmpn/v1/{path}", params=q)
+        except httpx.HTTPError as e:
+            raise NetError(f"The network at {self.base} did not answer ({type(e).__name__}).", 502)
+        if r.status_code == 404:
+            raise NetError(f"{self.base} has no FG-MPN routes.", 404)
+        if r.status_code != 200:
+            raise NetError(f"{self.base} answered HTTP {r.status_code}: {r.text[:200]}", 502)
+        try:
+            return r.json()
+        except ValueError:
+            raise NetError(f"{self.base} did not answer with JSON.", 502)
 
     def close(self):
         self.client.close()

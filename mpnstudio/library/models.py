@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import cores, networks
+from . import coreconf, cores, networks
 from ..desktop import paths, projects
 from ..store import netops
 
@@ -91,6 +91,11 @@ def status(m: dict) -> dict:
     core = None
     if not m.get("core"):
         problems.append("Choose a cognitive core.")
+    elif m["core"].get("endpoint_id"):
+        try:
+            coreconf.get(m["core"]["endpoint_id"])
+        except coreconf.CoreServerError:
+            problems.append("The chosen core server is no longer configured.")
     else:
         try:
             core = cores.get(m["core"]["id"])
@@ -98,9 +103,12 @@ def status(m: dict) -> dict:
                 problems.append(f"The core file is missing: {core['path']}")
         except cores.CoreError:
             problems.append("The chosen core is no longer in the library.")
-    if not (m.get("network") or {}).get("id"):
+    net = m.get("network") or {}
+    if net.get("release") and not net.get("id"):
+        problems.append("This pairing uses a read-only FG-MPN network. Studio explores those, but cannot answer from one yet; choose a Studio network.")
+    elif not net.get("id"):
         problems.append("Choose a node network.")
-    elif not projects.project_dir(m["network"]["id"]).exists():
+    elif not projects.project_dir(net["id"]).exists():
         problems.append("The chosen network no longer exists.")
     b = m.get("build") or {}
     if problems:
@@ -111,7 +119,10 @@ def status(m: dict) -> dict:
     if b.get("network_rev") != _net_head(m["network"]["id"]):
         stale.append("The network changed since the last build.")
     if b.get("config_hash") != config_hash(m):
-        stale.append("The settings changed since the last build.")
+        if b.get("net_hash") == net_hash(m) and b.get("network_rev") == _net_head(m["network"]["id"]):
+            stale.append("The core changed since the last test. Apply it: the network is kept.")
+        else:
+            stale.append("The settings changed since the last build.")
     return {"state": "ready" if not stale else "needs build", "problems": stale, "built": b.get("at")}
 
 
@@ -126,9 +137,28 @@ def _net_head(slug: str) -> int | None:
         return None
 
 
+def core_fp(m: dict) -> dict:
+    """What identifies the core a pairing answers with: the weights' hash, or the server's current configuration."""
+    c = m.get("core") or {}
+    if c.get("endpoint_id"):
+        try:
+            e = coreconf.get(c["endpoint_id"])
+        except coreconf.CoreServerError:
+            return {"endpoint": c["endpoint_id"], "missing": True}
+        return {"endpoint": e["id"], **{k: e.get(k) for k in ("base_url", "model_id", "context_tokens", "max_output_tokens", "timeout_s")}}
+    return {"core": c.get("id"), "sha256": c.get("sha256")}
+
+
+def net_hash(m: dict) -> str:
+    """Everything a build's snapshot and index depend on. The core is not part of it."""
+    import hashlib
+    keys = {k: m.get(k) for k in ("encoder", "network", "retrieval", "context", "identity", "name", "model_id")}
+    return hashlib.sha256(json.dumps(keys, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def config_hash(m: dict) -> str:
     import hashlib
-    keys = {k: m.get(k) for k in ("core", "encoder", "network", "retrieval", "context", "identity", "name", "model_id")}
+    keys = {"net": net_hash(m), "core": core_fp(m)}
     return hashlib.sha256(json.dumps(keys, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -145,6 +175,14 @@ def list_models() -> list[dict]:
 def _core_ref(cid: str | None, kind: str) -> dict | None:
     if not cid:
         return None
+    if coreconf.is_ref(cid):
+        if kind != "core":
+            raise ModelError("A core server cannot be used as a retrieval encoder.")
+        try:
+            e = coreconf.get(coreconf.ref_id(cid))
+        except coreconf.CoreServerError as ex:
+            raise ModelError(str(ex), ex.status)
+        return {"id": cid, "endpoint_id": e["id"], "name": e["name"], "model_id": e["model_id"], "server": True}
     c = cores.get(cid)
     if c["kind"] != kind:
         raise ModelError(f"{c['name']} is a {c['kind']}, not a {'cognitive core' if kind == 'core' else 'retrieval encoder'}.")
@@ -272,6 +310,51 @@ def _pick_test_question(store_path: Path) -> dict | None:
     return None
 
 
+def _core_parts(m: dict) -> dict:
+    """The core's share of a runtime MANIFEST.json: its description, where its weights are (or `core_endpoint`, for a core on a
+    server), and the vision projector. Never contains an API key."""
+    c = m["core"]
+    if c.get("endpoint_id"):
+        e = coreconf.get(c["endpoint_id"])
+        return {"core": {"name": e["name"], "sha256": None, "quantization": None, "parameters": None, "architecture": None, "server": True, "model_id": e["model_id"]},
+                "core_endpoint": {"id": e["id"], "name": e["name"], "base_url": e["base_url"], "model_id": e["model_id"], "context_tokens": e.get("context_tokens"),
+                                  "max_output_tokens": e.get("max_output_tokens"), "timeout_s": e.get("timeout_s"), "key_env": coreconf.KEY_ENV},
+                "core_path": "none", "mmproj": "none", "key": coreconf.api_key(e["id"])}
+    core = cores.get(c["id"])
+    if not core["compatibility"]["runnable"]:
+        raise ModelError(" ".join(core["compatibility"]["notes"]))
+    return {"core": {"name": core["name"], "sha256": core["sha256"], "quantization": core["info"]["quantization"], "parameters": core["info"]["parameters"],
+                     "architecture": core["info"]["architecture"]},
+            "core_endpoint": None, "core_path": core["path"], "mmproj": (core.get("projector") or {}).get("path") or "none", "key": None}
+
+
+def _test_inference(eng, tq: dict | None, log: Log) -> dict:
+    """Ask the pairing one real question from its network. Raises ModelError unless an answer comes back with node evidence."""
+    test: dict = {"question": None}
+    if tq:
+        ev = {"answer": "", "nodes": [], "route": None, "done": None, "error": None}
+        for kind, data in eng.run([{"role": "user", "content": tq["question"]}], mode="yaob"):
+            if kind == "token":
+                ev["answer"] += data["text"]
+            elif kind == "route":
+                ev["route"] = data
+            elif kind == "done":
+                ev["done"] = data
+            elif kind == "error":
+                ev["error"] = data.get("error")
+        nodes = [n for n in ((ev["route"] or {}).get("nodes") or []) if "text" in (n.get("read_as") or [])]
+        supplied = [n.get("id") for n in nodes]
+        test = {"question": tq["question"], "expected_node": {"id": tq["node_id"], "title": tq["title"]}, "answer": ev["answer"].strip(),
+                "error": ev["error"], "evidence_nodes": [{"id": n.get("id"), "title": n.get("title"), "via": n.get("via")} for n in nodes[:8]],
+                "expected_node_retrieved": tq["node_id"] in supplied,
+                "timing": (ev["done"] or {}).get("timing"), "usage": (ev["done"] or {}).get("usage")}
+        if ev["error"] or not test["answer"]:
+            raise ModelError(f"The test request failed: {ev['error'] or 'empty answer'}")
+        if not nodes:
+            raise ModelError("The test request ran, but retrieval supplied no node.")
+    return test
+
+
 def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[[], bool] | None = None) -> dict:
     """Validate, snapshot and index the network, write the runtime root, start the model and run a real test request
     with retrieval. The build counts as successful only if that request returns an answer with node evidence."""
@@ -281,14 +364,12 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
     st = status(m)
     if st["state"] == "incomplete":
         raise ModelError(" ".join(st["problems"]))
+    enc = cores.get(m["encoder"]["id"]) if m.get("encoder") else None
+    parts = _core_parts(m)
     rt = available()
-    if not rt["ok"]:
+    if (not parts["core_endpoint"] or enc) and not rt["ok"]:      # llama.cpp is needed for a local core, and for the encoder
         raise ModelError(rt["reason"], 409)
     t0 = time.perf_counter()
-    core = cores.get(m["core"]["id"])
-    if not core["compatibility"]["runnable"]:
-        raise ModelError(" ".join(core["compatibility"]["notes"]))
-    enc = cores.get(m["encoder"]["id"]) if m.get("encoder") else None
     if enc and not enc["present"]:
         raise ModelError(f"The encoder file is missing: {enc['path']}")
     slug = m["network"]["id"]
@@ -326,10 +407,9 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
         identity = m.get("identity") or default_identity(m["name"], m.get("core"), {"nodes": snap["nodes"]})
         manifest = {"name": m["name"], "model_id": m.get("model_id") or mid, "identity": identity, "owned_by": "local",
                     "version": m.get("version"), "network_writable": True, "built": now(),
-                    "core": {"name": core["name"], "sha256": core["sha256"], "quantization": core["info"]["quantization"],
-                             "parameters": core["info"]["parameters"], "architecture": core["info"]["architecture"]},
+                    "core": parts["core"], "core_endpoint": parts["core_endpoint"],
                     "encoder": {"name": enc["name"], "sha256": enc["sha256"]} if enc else None,
-                    "paths": {"core": core["path"], "mmproj": (core.get("projector") or {}).get("path") or "none",
+                    "paths": {"core": parts["core_path"], "mmproj": parts["mmproj"],
                               "encoder": enc["path"] if enc else "none", "network": str(net_path),
                               "checkpoint": rinfo["path"] if use_router else "none"}}
         (work / "MANIFEST.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
@@ -338,7 +418,7 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
                   "selected_nodes": int(r.get("selected_nodes", 8)), "concurrent_requests": int(c.get("parallel", 1)),
                   "output_tokens": int(c.get("output_tokens", 2048))}
         (work / "data" / "budget.json").write_text(json.dumps(budget))
-        eng = Engine(work, work / "data", device=device, context=int(c.get("tokens", 8192)))
+        eng = Engine(work, work / "data", device=device, context=int(c.get("tokens", 8192)), core_key=parts["key"])
         try:
             info = eng.load(log=lambda s: log("  " + s))
             step("model loaded", device=info["variant"], seconds=info["load_s"])
@@ -360,28 +440,7 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
                 if cache:
                     cache.store_overlay(net_path)
             tq = _pick_test_question(net_path)
-            test = {"question": None}
-            if tq:
-                ev = {"answer": "", "nodes": [], "route": None, "done": None, "error": None}
-                for kind, data in eng.run([{"role": "user", "content": tq["question"]}], mode="yaob"):
-                    if kind == "token":
-                        ev["answer"] += data["text"]
-                    elif kind == "route":
-                        ev["route"] = data
-                    elif kind == "done":
-                        ev["done"] = data
-                    elif kind == "error":
-                        ev["error"] = data.get("error")
-                nodes = [n for n in ((ev["route"] or {}).get("nodes") or []) if "text" in (n.get("read_as") or [])]
-                supplied = [n.get("id") for n in nodes]
-                test = {"question": tq["question"], "expected_node": {"id": tq["node_id"], "title": tq["title"]}, "answer": ev["answer"].strip(),
-                        "error": ev["error"], "evidence_nodes": [{"id": n.get("id"), "title": n.get("title"), "via": n.get("via")} for n in nodes[:8]],
-                        "expected_node_retrieved": tq["node_id"] in supplied,
-                        "timing": (ev["done"] or {}).get("timing"), "usage": (ev["done"] or {}).get("usage")}
-                if ev["error"] or not test["answer"]:
-                    raise ModelError(f"The test request failed: {ev['error'] or 'empty answer'}")
-                if not nodes:
-                    raise ModelError("The test request ran, but retrieval supplied no node.")
+            test = _test_inference(eng, tq, log)
             step("test inference", question=test.get("question"), retrieved_expected=test.get("expected_node_retrieved"),
                  answer=(test.get("answer") or "")[:200])
             report["test"] = test
@@ -408,7 +467,7 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
         man["paths"]["network"] = str(old / "network.sqlite")
         (old / "MANIFEST.json").write_text(json.dumps(man, indent=1, ensure_ascii=False))
         m = _read(mid)
-        m["build"] = {"ok": True, "at": report["finished"], "network_rev": net_head, "config_hash": config_hash(m), "routing": report["routing"],
+        m["build"] = {"ok": True, "at": report["finished"], "network_rev": net_head, "config_hash": config_hash(m), "net_hash": net_hash(m), "routing": report["routing"],
                       "device": report["device"], "seconds": report["seconds"], "test": {k: report["test"].get(k) for k in
                                                                                        ("question", "answer", "expected_node_retrieved", "timing")}}
         _write(mid, m)
@@ -420,6 +479,87 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
         m["build"] = {**prev, "ok": prev.get("ok", False), "error": str(e)[:800], "error_at": now()} if prev.get("ok") else {"ok": False, "error": str(e)[:800], "error_at": now()}
         _write(mid, m)
         raise
+
+
+def rebind(mid: str, log: Log = print, device: str = "auto") -> dict:
+    """Apply a changed core to a built pairing without rebuilding: the network snapshot and its retrieval index are kept, the
+    runtime manifest gets the new core, and the same test question is asked of it. Fails, changing nothing, if the network,
+    encoder or settings changed too (that needs a build) or if the new core does not answer."""
+    from ..engine.engine import Engine
+    from ..engine.runtime import available
+    m = _read(mid)
+    b = m.get("build") or {}
+    if not b.get("ok"):
+        raise ModelError("This pairing has not been built yet. Build it first.", 409)
+    if b.get("net_hash") != net_hash(m) or b.get("network_rev") != _net_head(m["network"]["id"]):
+        raise ModelError("The network or the settings changed since the last build, so the snapshot has to be rebuilt.", 409)
+    root = model_dir(mid) / "build"
+    mpath = root / "MANIFEST.json"
+    old_text = mpath.read_text()
+    man = json.loads(old_text)
+    enc = man.get("encoder")
+    parts = _core_parts(m)
+    rt = available()
+    if (not parts["core_endpoint"] or enc) and not rt["ok"]:
+        raise ModelError(rt["reason"], 409)
+    t0 = time.perf_counter()
+    man.update({"core": parts["core"], "core_endpoint": parts["core_endpoint"]})
+    man["paths"].update({"core": parts["core_path"], "mmproj": parts["mmproj"]})
+    mpath.write_text(json.dumps(man, indent=1, ensure_ascii=False))
+    try:
+        prev = json.loads((root / "build.json").read_text())
+        q = (prev.get("test") or {})
+        tq = {"node_id": (q.get("expected_node") or {}).get("id"), "title": (q.get("expected_node") or {}).get("title"), "question": q.get("question")} if q.get("question") else None
+        eng = Engine(root, root / "data", device=device, context=int((m.get("context") or {}).get("tokens", 8192)), core_key=parts["key"])
+        try:
+            info = eng.load(log=lambda s: log("  " + s))
+            log(f"core connected in {info['load_s']} s")
+            test = _test_inference(eng, tq, log)
+        finally:
+            eng.unload()
+    except Exception:
+        mpath.write_text(old_text)
+        raise
+    m = _read(mid)
+    b = dict(m["build"])
+    b.update({"config_hash": config_hash(m), "device": info["variant"], "seconds": round(time.perf_counter() - t0, 1), "at": now(), "rebound": True,
+              "test": {k: test.get(k) for k in ("question", "answer", "expected_node_retrieved", "timing")}})
+    m["build"] = b
+    _write(mid, m)
+    prev["test"], prev["rebound"] = test, now()
+    (root / "build.json").write_text(json.dumps(prev, indent=1, ensure_ascii=False))
+    return get(mid)
+
+
+def create_from_release(r: dict, mpn_rec: dict, core_rec: dict | None, endpoint_id: str | None = None, enc_rec: dict | None = None) -> dict:
+    """A pairing made by installing an official `model` release: it refers to the installed network and core, and keeps the release's defaults."""
+    d = r["detail"]
+    dfl = d.get("defaults") or {}
+    set_ = dfl.get("settings") or {}
+    if endpoint_id:
+        core_id = coreconf.PREFIX + endpoint_id
+    else:
+        core_id = (core_rec or {}).get("core_id")
+    if mpn_rec.get("format") == "studio-store":
+        m = create(r["name"], f"Official pairing {d.get('pairing') or r['id']} {r['version']}", core_id, mpn_rec["project"], (enc_rec or {}).get("core_id"))
+    else:
+        m = create(r["name"], f"Official pairing {d.get('pairing') or r['id']} {r['version']}", core_id, None, None)
+        raw = _read(m["id"])
+        raw["network"] = {"release": {"id": mpn_rec["id"], "version": mpn_rec["version"], "format": mpn_rec.get("format")}}
+        _write(m["id"], raw)
+    raw = _read(m["id"])
+    raw["release"] = {"id": r["id"], "version": r["version"], "pairing": d.get("pairing"), "mpn": {"id": mpn_rec["id"], "version": mpn_rec["version"]},
+                      "core": ({"id": core_rec["id"], "version": core_rec["version"]} if core_rec else None),
+                      "encoder": ({"id": enc_rec["id"], "version": enc_rec["version"]} if enc_rec else None)}
+    if dfl.get("model_id") and re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", str(dfl["model_id"])):
+        raw["model_id"] = dfl["model_id"]
+    for k in ("retrieval", "context"):
+        if isinstance(set_.get(k), dict):
+            raw[k] = {**(raw.get(k) or {}), **{a: b for a, b in set_[k].items() if a in (DEFAULT_RETRIEVAL if k == "retrieval" else DEFAULT_CONTEXT)}}
+    if isinstance(set_.get("identity"), str):
+        raw["identity"] = set_["identity"]
+    _write(m["id"], raw)
+    return get(m["id"])
 
 
 def build_root(mid: str) -> Path:

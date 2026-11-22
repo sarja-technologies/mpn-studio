@@ -3,13 +3,26 @@
   import { errText, fmtBytes, fmtInt } from '../api';
   import { studio, fmtParams, type ModelRow } from './studio.svelte';
   import NewModel from './NewModel.svelte';
+  import Releases from './Releases.svelte';
 
   const models = $derived(studio.data?.models ?? []);
   let composing = $state(false);
+  let preset = $state<string | undefined>(undefined);
+  $effect(() => {
+    if (studio.compose) {          // "Pair with a network" on a core
+      preset = studio.compose.core;
+      composing = true;
+      studio.compose = null;
+    }
+  });
   let menuFor = $state<string | null>(null);
 
-  const netName = (m: ModelRow) => (m.network ? (studio.network(m.network.id)?.name ?? 'missing network') : 'no network');
-  const netNodes = (m: ModelRow) => (m.network ? studio.network(m.network.id)?.nodes : undefined);
+  const netName = (m: ModelRow) => (m.network?.id ? (studio.network(m.network.id)?.name ?? 'missing network') : m.network?.release ? `${m.network.release.id} (read-only)` : 'no network');
+  const netNodes = (m: ModelRow) => (m.network?.id ? studio.network(m.network.id)?.nodes : undefined);
+  const coreLine = (m: ModelRow) => {
+    const s = m.core?.endpoint_id ? studio.server(m.core.endpoint_id) : null;
+    return s ? `on ${s.base_url.replace(/^https?:\/\//, '').replace(/\/v1$/, '')}` : m.core ? `${fmtParams(m.core.parameters)} ${m.core.quantization ?? ''}` : '';
+  };
   const stateWord = (m: ModelRow) => (m.status.state === 'ready' ? 'Built' : m.status.state === 'needs build' ? 'Needs a build' : 'Incomplete');
   const running = (m: ModelRow) => studio.data?.runs.some((r) => r.key === m.id && r.health !== 'stopped');
 
@@ -25,18 +38,19 @@
 
 <div class="wrap">
   {#if !models.length || composing}
-    <NewModel first={!models.length} oncancel={models.length ? () => (composing = false) : undefined} />
+    <NewModel first={!models.length} core={preset} oncancel={models.length ? () => ((composing = false), (preset = undefined)) : undefined} />
+    {#if !models.length}<Releases kind="model" title="Official pairings" />{/if}
   {:else}
     <div class="row head">
-      <h1>Models</h1>
+      <h1>Pairings</h1>
       <span class="grow"></span>
       <button class="btn" onclick={() => studio.openMpn()}>Open .mpn file</button>
-      <button class="btn primary" onclick={() => (composing = true)}>New model</button>
+      <button class="btn primary" onclick={() => (composing = true)}>New pairing</button>
     </div>
     {#if studio.opening}<p class="muted">{studio.opening}</p>{/if}
     <table class="list">
       <thead>
-        <tr><th>Model</th><th class="hide-narrow">Cognitive core</th><th class="hide-narrow">Node network</th><th>State</th><th></th></tr>
+        <tr><th>Pairing</th><th class="hide-narrow">Cognitive core</th><th class="hide-narrow">MPN network</th><th>State</th><th></th></tr>
       </thead>
       <tbody>
         {#each models as m (m.id)}
@@ -46,12 +60,12 @@
               {#if m.description}<div class="muted small ellipsis">{m.description}</div>{/if}
             </td>
             <td class="hide-narrow">
-              {#if m.core}{m.core.name}<span class="muted after">{fmtParams(m.core.parameters)} {m.core.quantization}</span>{:else}<span class="muted">none</span>{/if}
+              {#if m.core}{m.core.name}<span class="muted after">{coreLine(m)}</span>{:else}<span class="muted">none</span>{/if}
             </td>
             <td class="hide-narrow">
               {netName(m)}{#if netNodes(m) != null}<span class="muted num after">{fmtInt(netNodes(m) ?? 0)} nodes</span>{/if}
             </td>
-            <td>{stateWord(m)}{#if running(m)}<span class="muted">, running</span>{/if}</td>
+            <td class="state">{stateWord(m)}{#if running(m)}<span class="muted">, running</span>{/if}</td>
             <td class="act">
               <button class="btn primary" onclick={() => (studio.model = m.id)}>Open</button>
               <div class="anchor">
@@ -69,6 +83,7 @@
         {/each}
       </tbody>
     </table>
+    <Releases kind="model" title="Official pairings" />
     {#if studio.data?.opened.length}
       <h2>Opened .mpn files</h2>
       <table class="list">
@@ -89,6 +104,9 @@
 <style>
   .head {
     gap: 12px;
+  }
+  .state {
+    white-space: nowrap;
   }
   .after {
     margin-left: 6px;

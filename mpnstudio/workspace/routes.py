@@ -130,16 +130,26 @@ def register(app: FastAPI, ctx: dict, get_store: Callable, open_project: Callabl
             open_project(new)
         return {"id": new, "kind": P.kind_of(P.read_manifest(new))}
 
+    def _connect(mode: str, target: str):
+        """A source's connection. An FG-MPN store folder is served read-only on a loopback port first."""
+        if mode == "fgmpn":
+            from ..mpnnet import fgmpn_local
+            try:
+                return Remote(fgmpn_local.serve(target))
+            except fgmpn_local.FgError as e:
+                raise NetError(str(e), e.status)
+        return Remote(target) if mode == "remote" else Local(target)
+
     @app.post("/api/projects/link/probe")
     def projects_link_probe(body: dict):
         """Check a folder or address before linking it: what network is there, how big, how fast it answered."""
         mode, target = body.get("mode"), (body.get("target") or "").strip()
-        if mode == "local":
+        if mode in ("local", "fgmpn"):
             target = _abs(target, "folder")
         elif mode != "remote":
-            raise P.ProjectError("mode must be local or remote.")
+            raise P.ProjectError("mode must be local, fgmpn or remote.")
         t = time.perf_counter()
-        c = Remote(target) if mode == "remote" else Local(target)
+        c = _connect(mode, target)
         try:
             ident = identify(c)
         finally:
@@ -157,10 +167,10 @@ def register(app: FastAPI, ctx: dict, get_store: Callable, open_project: Callabl
             raise P.ProjectError("Give at least one folder or address.")
         ident, errors = None, []
         for s in sources:
-            if s.get("mode") == "local":
+            if s.get("mode") in ("local", "fgmpn"):
                 s["target"] = _abs(s.get("target"), "folder")
             try:
-                c = Remote(s["target"]) if s.get("mode") == "remote" else Local(s["target"])
+                c = _connect(s.get("mode"), s["target"])
             except NetError as e:
                 errors.append(f"{describe_source(s)}: {e}")
                 continue
@@ -196,6 +206,8 @@ def register(app: FastAPI, ctx: dict, get_store: Callable, open_project: Callabl
             slug = forkfile.import_file(path, name)
         elif path.suffix == ".mpnbak":
             slug = P.restore(path, name)
+        elif path.is_dir() and (path / "CURRENT").is_file() and (path / "manifests").is_dir():      # an FG-MPN store
+            return projects_link({"name": name, "sources": [{"mode": "fgmpn", "target": str(path)}], "open": body.get("open", True)})
         elif path.is_dir() and ((path / "parts" / "p00.sqlite").exists() or (path / "p00.sqlite").exists()):
             return projects_link({"name": name, "sources": [{"mode": "local", "target": str(path)}], "open": body.get("open", True)})
         elif path.is_dir() and (path / "network" / "yaob-n10k.sqlite").exists():
@@ -331,6 +343,47 @@ def register(app: FastAPI, ctx: dict, get_store: Callable, open_project: Callabl
     @app.get("/api/ws/node/{nid}/graph")
     def ws_graph(nid: str, limit: int = 40):
         return props.named(ws().graph(_nid(nid), max(4, min(limit, 120))))
+
+    # FG-MPN networks (fgmpn.netserve): why a node exists, derived statements with proofs, addresses, storage
+    @app.get("/api/ws/fgmpn/about")
+    def ws_fg_about():
+        return ws().fgmpn("about")
+
+    @app.get("/api/ws/fgmpn/storage")
+    def ws_fg_storage():
+        return ws().fgmpn("storage")
+
+    @app.get("/api/ws/fgmpn/resolve")
+    def ws_fg_resolve(address: str = ""):
+        if not address.startswith("fg://") or len(address) > 1000:
+            raise HTTPException(400, "Give an fg:// address.")
+        return _fg_named(ws().fgmpn("resolve", {"address": address}))
+
+    @app.get("/api/ws/fgmpn/node/{nid}")
+    def ws_fg_node(nid: str):
+        return _fg_named(ws().fgmpn(f"node/{_hex(nid)}"))
+
+    @app.get("/api/ws/fgmpn/node/{nid}/compare")
+    def ws_fg_compare(nid: str):
+        return ws().fgmpn(f"node/{_hex(nid)}/compare")
+
+    def _fg_named(x):
+        """Property ids in proofs (P131, P279, P19 …) get their names, as relationships do elsewhere."""
+        if isinstance(x, dict):
+            out = {k: _fg_named(v) for k, v in x.items()}
+            for k in ("p", "property"):
+                if isinstance(out.get(k), str) and props.name(out[k]) != out[k]:
+                    out[k + "_label"] = props.name(out[k])
+            return out
+        if isinstance(x, list):
+            return [_fg_named(v) for v in x]
+        return x
+
+    def _hex(n: str) -> str:
+        n = (n or "").lower()
+        if len(n) != 32 or any(ch not in "0123456789abcdef" for ch in n):
+            raise HTTPException(400, "Not a node id.")
+        return n
 
     @app.get("/api/ws/clusters")
     def ws_clusters(domain: str | None = None, kind: str | None = None):

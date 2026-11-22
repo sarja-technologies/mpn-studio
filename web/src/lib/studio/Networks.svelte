@@ -4,6 +4,10 @@
   import { desk, openInFileManager } from '../desktop.svelte';
   import { openBackupFile } from '../desktop-actions';
   import { del, errText, fmtBytes, fmtInt, get, patch, post } from '../api';
+  import { pickFile, pickFolder } from '../desktop.svelte';
+  import { catalogue } from './catalogue.svelte';
+  import InstalledNetworks from './InstalledNetworks.svelte';
+  import Releases from './Releases.svelte';
   import Modal from '../ui/Modal.svelte';
   import { studio, type NetworkRow, type TaskView } from './studio.svelte';
 
@@ -153,15 +157,49 @@
     }
     busy = null;
   }
+  /** the network inside a .mpn file, verified first; its core is not imported */
+  async function impMpn() {
+    importMenu = false;
+    error = null;
+    const f = await pickFile('Choose a .mpn file to take its network from', ['mpn']);
+    if (!f) return;
+    busy = 'Verifying the file';
+    try {
+      const t = await studio.follow(post<TaskView>('api/library/networks/import-mpn', { path: f }), (t) => (busy = `${t.title}: ${t.progress.label} ${t.progress.total ? Math.round((100 * t.progress.done) / t.progress.total) + '%' : ''}`));
+      if (t.state !== 'done') throw new Error(t.error ?? 'The import did not finish.');
+      app.toast(`Imported ${t.result.name}: ${fmtInt(t.result.nodes ?? 0)} nodes. The file's core was not imported.`);
+      await studio.load();
+    } catch (e) {
+      error = errText(e);
+    }
+    busy = null;
+  }
+  /** an FG-MPN folder: every segment is checked against the store's own manifest before it is added */
+  async function impFg() {
+    importMenu = false;
+    error = null;
+    const d = await pickFolder('Choose an FG-MPN folder (it holds CURRENT, manifests and segments)');
+    if (!d) return;
+    busy = 'Checking the folder';
+    try {
+      const t = await studio.follow(post<TaskView>('api/releases/fgmpn', { path: d, copy: false }), (t) => (busy = `Checking ${t.progress.label} ${t.progress.total ? Math.round((100 * t.progress.done) / t.progress.total) + '%' : ''}`));
+      if (t.state !== 'done') throw new Error(t.error ?? 'The check did not finish.');
+      app.toast(`${t.result.name} verified: ${fmtInt(t.result.nodes ?? 0)} nodes. It stays where it is.`);
+      await catalogue.load();
+    } catch (e) {
+      error = errText(e);
+    }
+    busy = null;
+  }
   const origin = (n: NetworkRow) =>
-    ({ 'spark-snapshot': 'Imported from a DGX Spark snapshot', bundle: 'Imported from a bundle', restore: 'Restored from a backup', 'store-file': 'Imported from a store file', 'yaob-release': 'Imported from a Yaob release', duplicate: `Copy of ${n.origin?.of_name ?? ''}`, specialised: `Part of ${n.origin?.of_name ?? ''}` })[n.origin?.kind as string] ?? '';
+    ({ 'spark-snapshot': 'Imported from a DGX Spark snapshot', bundle: 'Imported from a bundle', restore: 'Restored from a backup', 'store-file': 'Imported from a store file', 'yaob-release': 'Imported from a Yaob release', release: 'Installed from an official release', 'mpn-file': 'Network of a .mpn file', duplicate: `Copy of ${n.origin?.of_name ?? ''}`, specialised: `Part of ${n.origin?.of_name ?? ''}` })[n.origin?.kind as string] ?? '';
   const when = (s?: string) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
   const others = (n: NetworkRow) => rows.filter((r) => r.id !== n.id && !r.damaged);
 </script>
 
 <div class="wrap">
   <div class="row head">
-    <h1>Node networks</h1>
+    <h1>MPN networks</h1>
     <span class="grow"></span>
     <div class="anchor">
       <button class="btn" aria-haspopup="menu" aria-expanded={importMenu} disabled={!!busy} onclick={() => (importMenu = !importMenu)}>Import</button>
@@ -169,6 +207,8 @@
         <div class="pop menu" role="menu">
           <button role="menuitem" onclick={() => imp('auto')}>Network folder (bundle or Yaob release)</button>
           <button role="menuitem" onclick={() => imp('store')}>Store file</button>
+          <button role="menuitem" onclick={impMpn}>Network from a .mpn file</button>
+          <button role="menuitem" onclick={impFg}>FG-MPN folder (read-only)</button>
           <button role="menuitem" onclick={() => ((importMenu = false), openBackupFile())}>Backup file</button>
         </div>
       {/if}
@@ -223,6 +263,8 @@
     <div class="empty"><p>No networks yet. Create an empty one, or import one you already have.</p></div>
   {/if}
   <p class="muted small where">Networks are stored in {desk.info?.paths.projects}.</p>
+  <InstalledNetworks />
+  <Releases kind="mpn" title="Official networks" note="Each file is checked against its SHA-256 and size before the network is installed." />
 </div>
 
 {#if dlg?.kind === 'new'}

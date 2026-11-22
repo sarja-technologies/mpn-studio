@@ -16,6 +16,7 @@ export interface CoreRow {
   projector?: any;
   source?: any;
   imported?: string;
+  release?: { id: string; version: string; quant?: string };
 }
 export interface NetworkRow {
   id: string;
@@ -37,9 +38,10 @@ export interface ModelRow {
   description?: string;
   model_id: string;
   version?: string;
-  core: { id: string; name: string; quantization?: string; parameters?: number; bytes?: number; license?: string } | null;
+  core: { id: string; name: string; quantization?: string; parameters?: number; bytes?: number; license?: string; endpoint_id?: string; model_id?: string; server?: boolean } | null;
   encoder: { id: string; name: string } | null;
-  network: { id: string } | null;
+  network: { id?: string; release?: { id: string; version: string } } | null;
+  release?: { id: string; version: string; pairing?: string | null } | null;
   identity: string | null;
   retrieval: Record<string, any>;
   context: { tokens: number; parallel: number; output_tokens: number };
@@ -47,6 +49,20 @@ export interface ModelRow {
   status: { state: 'ready' | 'needs build' | 'incomplete'; problems: string[]; built?: string };
   run?: { health: string; port: number } | null;
   build_report?: any;
+}
+export interface CoreServer {
+  id: string;
+  id_ref: string;
+  name: string;
+  base_url: string;
+  model_id: string;
+  context_tokens: number | null;
+  max_output_tokens: number | null;
+  timeout_s: number;
+  api_key_env: string | null;
+  has_key: boolean;
+  key_source: string | null;
+  last_test: { ok: boolean; code: string | null; message: string; latency_ms: number | null; tested_at: string } | null;
 }
 export interface TaskView {
   id: string;
@@ -67,6 +83,8 @@ export interface Overview {
   runs: { key: string; health: string }[];
   opened: { key: string; file: string; name: string; summary: any; run: any }[];
   open_network: string | null;
+  core_servers: CoreServer[];
+  releases: any[];
 }
 
 export type Tab = 'models' | 'cores' | 'networks' | 'tests' | 'mpnnet';
@@ -75,6 +93,13 @@ class Studio {
   tab = $state<Tab>('models');
   data = $state.raw<Overview | null>(null);
   error = $state<string | null>(null);
+  /** a new pairing being composed from elsewhere (a core's "Pair with a network"): the core to start from */
+  compose = $state<{ core: string } | null>(null);
+  newPairing(core: string) {
+    this.compose = { core };
+    this.model = null;
+    this.tab = 'models';
+  }
   /** the model (or opened .mpn key) shown in detail */
   model = $state<string | null>(null);
   tasks = $state.raw<Record<string, TaskView>>({});
@@ -91,6 +116,9 @@ class Studio {
   }
   core(id?: string | null) {
     return this.data?.cores.find((c) => c.id === id) ?? null;
+  }
+  server(id?: string | null) {
+    return this.data?.core_servers.find((c) => c.id === id) ?? null;
   }
   network(id?: string | null) {
     return this.data?.networks.find((n) => n.id === id) ?? null;
