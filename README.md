@@ -60,9 +60,9 @@ the box: the app carries the public [FG-MPN runtime](https://github.com/sarja-te
 The packages include llama.cpp builds for CPU, CUDA (NVIDIA) and, on x86-64, Vulkan, and use the first that finds a
 usable device. The NVIDIA or Vulkan driver must already be installed; without a GPU, models run on the CPU.
 
-Tested for 0.6.0: the headless backends of the x86-64 and ARM64 .deb packages against the live catalogue and the public Hugging Face packages, and Yaob Origin N119M
-answered, re-bound and imported as a package on ARM64; no window was driven for this release. See [docs/desktop/ACCEPTANCE.md](docs/desktop/ACCEPTANCE.md) for what was and was not run. CUDA and Vulkan
-inference of this release, other distributions and AMD and Intel GPUs are untested. There is no Windows or macOS build.
+Tested for 0.6.0: the headless backends of the x86-64 and ARM64 .deb packages against the live catalogue and the public Hugging Face packages, Yaob Origin N119M
+answered, re-bound and imported as a package on ARM64 (also on its CUDA runtime), and the ARM64 AppImage started in a virtual display; the full window script was not run for this release. See
+[docs/desktop/ACCEPTANCE.md](docs/desktop/ACCEPTANCE.md) for what was and was not run. x86-64 CUDA and Vulkan inference, other distributions and AMD and Intel GPUs are untested. There is no Windows or macOS build.
 
 ## Projects
 

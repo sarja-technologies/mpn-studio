@@ -28,9 +28,13 @@ with a citation, and was rebound to a second core with the hash unchanged. The s
 the pairing is "ready" with its 0.5.0 build (hash `614948c6df233410`), answered with no rebuild, `release verify` passes, the four projects list and an FG-MPN network opens in the explorer (10,007 nodes).
 Only `INSTALL.json` (the verification time) and the new explorer project changed.
 
-**Not tested for 0.6.0.** No window was driven: the AppImages were run only as `mpn` (x86-64: `catalogue refresh`, `package`; ARM64: `catalogue`), the interface was built and unit-tested but not looked at in a real window on either architecture
-(0.5.0's window run is the last one). Neither `.deb` was installed with `apt`; both were unpacked and their backend run. N119M was answered on ARM64 only (the store lives there). CUDA and Vulkan inference, other
-distributions, AMD and Intel GPUs. The packages are not signed.
+**After publication (same files).** ARM64 AppImage in a virtual 1440x900 X11 display on the Spark: the window opened, the backend answered, the catalogue (8 releases, N119M at 40 GB) was read,
+the N10K network installed and was listed under MPN networks with FG-MPN 0.2.2 (a start-up and release-screen check, not the full window script). CUDA on ARM64: a pairing on N119M with its own local core,
+run by the package on the Spark's GPU, answered at 24.9 tokens/s against 2.6 tokens/s on the CPU, with its citation. `apt-get -s install` of the ARM64 `.deb` on Ubuntu 24.04 resolved its dependencies.
+
+**Not tested for 0.6.0.** The x86-64 packages were not run in a window, and `scripts/window-acceptance.sh` was not run on either architecture (0.5.0's x86-64 run is the latest); the x86-64 AppImage was run only as `mpn`
+(`catalogue refresh`, `package`). Neither `.deb` was installed with `apt` (no root and no container on the build machines). N119M was answered on ARM64 only (the store lives there), and not installed from the catalogue (40 GB).
+x86-64 CUDA and Vulkan inference, other distributions, AMD and Intel GPUs. The packages are not signed.
 
 ## MPN Studio 0.5.0 (23 November 2026)
 
