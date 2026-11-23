@@ -7,9 +7,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class FakeCore:
-    def __init__(self, name="core-A", model="fake-model", key=None, strict_ids=False, reject_extras=False, delay=0.0, n_ctx=None, context_error=False):
+    def __init__(self, name="core-A", model="fake-model", key=None, strict_ids=False, reject_extras=False, delay=0.0, n_ctx=None, context_error=False, reply=None):
         self.name, self.model, self.key, self.strict_ids, self.reject_extras, self.delay = name, model, key, strict_ids, reject_extras, delay
-        self.n_ctx, self.context_error = n_ctx, context_error
+        self.n_ctx, self.context_error, self.reply = n_ctx, context_error, reply
         self.requests: list[dict] = []
         outer = self
 
@@ -61,6 +61,8 @@ class FakeCore:
                 text = f"{outer.name}: ready"
                 if any("Knowledge nodes" in str(m.get("content")) for m in body.get("messages", [])):
                     text = f"{outer.name} answers from the network."
+                if outer.reply:
+                    text = outer.reply(body) or text
                 usage = {"prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18}
                 if not body.get("stream"):
                     return self._send(200, {"id": "x", "object": "chat.completion", "model": outer.model, "usage": usage,

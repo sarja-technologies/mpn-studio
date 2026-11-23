@@ -104,8 +104,8 @@ def status(m: dict) -> dict:
         except cores.CoreError:
             problems.append("The chosen core is no longer in the library.")
     net = m.get("network") or {}
-    if net.get("release") and not net.get("id"):
-        problems.append("This pairing uses a read-only FG-MPN network. Studio explores those, but cannot answer from one yet; choose a Studio network.")
+    if is_fg(m):
+        problems += fg_problems(m)
     elif not net.get("id"):
         problems.append("Choose a node network.")
     elif not projects.project_dir(net["id"]).exists():
@@ -116,14 +116,64 @@ def status(m: dict) -> dict:
     if not b.get("ok"):
         return {"state": "needs build", "problems": [b["error"]] if b.get("error") else []}
     stale = []
-    if b.get("network_rev") != _net_head(m["network"]["id"]):
+    if b.get("network_rev") != head_of(m):
         stale.append("The network changed since the last build.")
     if b.get("config_hash") != config_hash(m):
-        if b.get("net_hash") == net_hash(m) and b.get("network_rev") == _net_head(m["network"]["id"]):
+        if b.get("net_hash") == net_hash(m) and b.get("network_rev") == head_of(m):
             stale.append("The core changed since the last test. Apply it: the network is kept.")
         else:
             stale.append("The settings changed since the last build.")
     return {"state": "ready" if not stale else "needs build", "problems": stale, "built": b.get("at")}
+
+
+def is_fg(m: dict) -> bool:
+    """The pairing reads a native FG-MPN network where it is stored (a registered or installed release), not a Studio network."""
+    net = m.get("network") or {}
+    return bool(net.get("release")) and not net.get("id")
+
+
+def fg_record(m: dict) -> dict | None:
+    from ..catalogue import install
+    r = (m.get("network") or {}).get("release") or {}
+    return install.get_installed("mpn", r.get("id"), r.get("version"), "fgmpn") if r.get("id") else None
+
+
+def fg_store(m: dict) -> Path | None:
+    from ..catalogue import install
+    rec = fg_record(m)
+    return install.store_dir(rec) if rec else None
+
+
+def fg_problems(m: dict) -> list[str]:
+    """Why a pairing on an FG-MPN network cannot run now. Cheap: the runtime import and the manifest's sizes, no segment is read."""
+    from ..mpnnet import fgmpn_local
+    from ..engine import fgreason
+    rec = fg_record(m)
+    if rec is None:
+        return ["The FG-MPN network of this pairing is not installed or registered on this computer."]
+    try:
+        info = fgmpn_local.inspect_store(fg_store(m))
+    except fgmpn_local.FgError as e:
+        return [str(e)]
+    if not info["ok"]:
+        return ["The FG-MPN store is missing parts: " + "; ".join((info["missing"] + info["wrong_size"])[:3]) + ". Verify it, or register it again."]
+    why = fgreason.runtime_ok()
+    return [why] if why else []
+
+
+def fg_head(m: dict) -> str | None:
+    """What identifies the store's content: generation and the SHA-256 of its live manifest (which lists every segment's SHA-256)."""
+    from ..engine import fgreason
+    st = fg_store(m)
+    try:
+        i = fgreason.store_identity(st)
+        return f"gen{i['generation']}:{i['manifest_sha256'][:16]}"
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def head_of(m: dict):
+    return fg_head(m) if is_fg(m) else _net_head(m["network"]["id"])
 
 
 def _net_head(slug: str) -> int | None:
@@ -153,6 +203,8 @@ def net_hash(m: dict) -> str:
     """Everything a build's snapshot and index depend on. The core is not part of it."""
     import hashlib
     keys = {k: m.get(k) for k in ("encoder", "network", "retrieval", "context", "identity", "name", "model_id")}
+    if is_fg(m):
+        keys["encoder"] = None                     # an FG-MPN network is read without embeddings: the encoder plays no part
     return hashlib.sha256(json.dumps(keys, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -310,6 +362,33 @@ def _pick_test_question(store_path: Path) -> dict | None:
     return None
 
 
+def _pick_test_question_fg(root: Path) -> dict | None:
+    """A question an FG-MPN network can answer, found without scanning it: a few thousand rows from the start of a few segments, the first
+    entity with a description and a title that names exactly one entity."""
+    from ..engine import fgreason
+    net = fgreason.FgNetwork(root)
+    try:
+        V = net.V
+        want = {V.KIND_ID[k] for k in ("person", "concept", "organisation")}
+        step = max(1, len(net.store.segments) // 4)
+        for s in net.store.segments[::step][:4]:
+            for e in range(0, min(s.N, 40000), 1 if s.N <= 5000 else 7):
+                c = s.cols(e)
+                if c[4] != 1 or c[0] not in want or not (6 <= len(c[7]) <= 50):
+                    continue
+                r = s.row(e)
+                desc = r.get("summary") or ""
+                if len(desc) < 12:
+                    continue
+                if len(net.title_lookup(c[7], 3, fgreason.ENTITY_KINDS)) != 1:
+                    continue
+                return {"node_id": s.nid(e).hex(), "title": c[7], "question": f"What is {c[7]}? Answer in one or two sentences.", "statement": desc}
+    finally:
+        for sg in net.store.segments:
+            sg.close()
+    return None
+
+
 def _core_parts(m: dict) -> dict:
     """The core's share of a runtime MANIFEST.json: its description, where its weights are (or `core_endpoint`, for a core on a
     server), and the vision projector. Never contains an API key."""
@@ -364,7 +443,8 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
     st = status(m)
     if st["state"] == "incomplete":
         raise ModelError(" ".join(st["problems"]))
-    enc = cores.get(m["encoder"]["id"]) if m.get("encoder") else None
+    fg = is_fg(m)
+    enc = cores.get(m["encoder"]["id"]) if (m.get("encoder") and not fg) else None        # an FG-MPN network is read without embeddings
     parts = _core_parts(m)
     rt = available()
     if (not parts["core_endpoint"] or enc) and not rt["ok"]:      # llama.cpp is needed for a local core, and for the encoder
@@ -372,8 +452,8 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
     t0 = time.perf_counter()
     if enc and not enc["present"]:
         raise ModelError(f"The encoder file is missing: {enc['path']}")
-    slug = m["network"]["id"]
-    net_head = _net_head(slug)
+    slug = None if fg else m["network"]["id"]
+    net_head = head_of(m)
     d = model_dir(mid)
     work = d / "build.new"
     shutil.rmtree(work, ignore_errors=True)
@@ -386,23 +466,34 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
 
     try:
         net_path = work / "network.sqlite"
-        snap = netops.extract(projects.store_path(slug), net_path, message=f"snapshot of network {slug} at revision {net_head} for model {mid}")
-        step("network snapshot", nodes=snap["nodes"], relations=snap["edges"], revision=net_head)
-        if snap["nodes"] == 0:
-            raise ModelError("The network has no live nodes.")
-        # learned router: only with the encoder it was trained for
-        rinfo = networks.router(slug)
-        routing = (m.get("retrieval") or {}).get("routing", "auto")
-        use_router = False
-        if rinfo and routing in ("auto", "learned"):
-            want = (rinfo.get("encoder") or {}).get("sha256")
-            use_router = bool(enc and want and want == enc["sha256"])
-            if not use_router and routing == "learned":
-                raise ModelError("This network's learned router needs the encoder it was trained with; choose that encoder, or use retrieval routing.")
-        step("routing", mode="learned router" if use_router else ("retrieval: encoder and text search" if enc else "retrieval: text search only"))
-        cache = EmbeddingCache(enc["sha256"]) if enc else None
-        if cache:
-            step("embedding cache", reused=cache.fill_overlay(net_path))
+        if fg:
+            # the store is referenced where it is: nothing is copied, snapshotted or embedded
+            from ..engine import fgreason
+            root_fg = fg_store(m)
+            ident = fgreason.store_identity(root_fg)
+            snap = {"nodes": ident["stored_records"], "edges": None}
+            rinfo, use_router, cache = None, False, None
+            step("network", format="FG-MPN, read in place", path=str(root_fg), generation=ident["generation"], stored_records=ident["stored_records"],
+                 manifest_sha256=ident["manifest_sha256"][:16])
+            step("routing", mode="FG-MPN entity linking over the store's indexes (no embeddings)")
+        else:
+            snap = netops.extract(projects.store_path(slug), net_path, message=f"snapshot of network {slug} at revision {net_head} for model {mid}")
+            step("network snapshot", nodes=snap["nodes"], relations=snap["edges"], revision=net_head)
+            if snap["nodes"] == 0:
+                raise ModelError("The network has no live nodes.")
+            # learned router: only with the encoder it was trained for
+            rinfo = networks.router(slug)
+            routing = (m.get("retrieval") or {}).get("routing", "auto")
+            use_router = False
+            if rinfo and routing in ("auto", "learned"):
+                want = (rinfo.get("encoder") or {}).get("sha256")
+                use_router = bool(enc and want and want == enc["sha256"])
+                if not use_router and routing == "learned":
+                    raise ModelError("This network's learned router needs the encoder it was trained with; choose that encoder, or use retrieval routing.")
+            step("routing", mode="learned router" if use_router else ("retrieval: encoder and text search" if enc else "retrieval: text search only"))
+            cache = EmbeddingCache(enc["sha256"]) if enc else None
+            if cache:
+                step("embedding cache", reused=cache.fill_overlay(net_path))
         r, c = m.get("retrieval") or {}, m.get("context") or {}
         identity = m.get("identity") or default_identity(m["name"], m.get("core"), {"nodes": snap["nodes"]})
         manifest = {"name": m["name"], "model_id": m.get("model_id") or mid, "identity": identity, "owned_by": "local",
@@ -411,7 +502,9 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
                     "encoder": {"name": enc["name"], "sha256": enc["sha256"]} if enc else None,
                     "paths": {"core": parts["core_path"], "mmproj": parts["mmproj"],
                               "encoder": enc["path"] if enc else "none", "network": str(net_path),
-                              "checkpoint": rinfo["path"] if use_router else "none"}}
+                              "checkpoint": rinfo["path"] if use_router else "none", **({"fgmpn": str(root_fg)} if fg else {})},
+                    **({"network_format": {"format": "fgmpn", "generation": ident["generation"], "manifest_sha256": ident["manifest_sha256"],
+                                           "release": (m.get("network") or {}).get("release")}} if fg else {})}
         (work / "MANIFEST.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
         budget = {"text_nodes": int(r.get("text_nodes", 4)), "retrieval_candidates": int(r.get("retrieval_candidates", 48)),
                   "max_active_mpns": int(r.get("max_active_mpns", 3)), "tool_rounds": int(r.get("tool_rounds", 2)),
@@ -439,7 +532,7 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
                 step("retrieval index", embedded_now=total, covered_by_router=covered)
                 if cache:
                     cache.store_overlay(net_path)
-            tq = _pick_test_question(net_path)
+            tq = _pick_test_question_fg(root_fg) if fg else _pick_test_question(net_path)
             test = _test_inference(eng, tq, log)
             step("test inference", question=test.get("question"), retrieved_expected=test.get("expected_node_retrieved"),
                  answer=(test.get("answer") or "")[:200])
@@ -450,13 +543,15 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
             eng.unload()
             if cache:
                 cache.close()
-        # the snapshot is final: fold its WAL so the file is self-contained
-        s = sqlite3.connect(net_path)
-        s.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        s.execute("PRAGMA journal_mode=DELETE")
-        s.close()
-        report.update({"ok": True, "finished": now(), "seconds": round(time.perf_counter() - t0, 1), "routing": "learned" if use_router else "retrieval",
-                       "network": {"id": slug, "revision": net_head, "nodes": snap["nodes"], "relations": snap["edges"]}})
+        if not fg:
+            # the snapshot is final: fold its WAL so the file is self-contained
+            s = sqlite3.connect(net_path)
+            s.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            s.execute("PRAGMA journal_mode=DELETE")
+            s.close()
+        report.update({"ok": True, "finished": now(), "seconds": round(time.perf_counter() - t0, 1), "routing": "fgmpn" if fg else ("learned" if use_router else "retrieval"),
+                       "network": ({"format": "fgmpn", "path": str(root_fg), "generation": ident["generation"], "manifest_sha256": ident["manifest_sha256"],
+                                    "stored_records": snap["nodes"]} if fg else {"id": slug, "revision": net_head, "nodes": snap["nodes"], "relations": snap["edges"]})})
         (work / "build.json").write_text(json.dumps(report, indent=1, ensure_ascii=False))
         old = d / "build"
         if old.exists():
@@ -464,7 +559,7 @@ def build(mid: str, log: Log = print, device: str = "auto", cancelled: Callable[
         os.replace(work, old)
         # paths in the manifest pointed into build.new
         man = json.loads((old / "MANIFEST.json").read_text())
-        man["paths"]["network"] = str(old / "network.sqlite")
+        man["paths"]["network"] = str(old / "network.sqlite")      # (an FG-MPN pairing has no such file; its path stays the store's own)
         (old / "MANIFEST.json").write_text(json.dumps(man, indent=1, ensure_ascii=False))
         m = _read(mid)
         m["build"] = {"ok": True, "at": report["finished"], "network_rev": net_head, "config_hash": config_hash(m), "net_hash": net_hash(m), "routing": report["routing"],
@@ -491,7 +586,7 @@ def rebind(mid: str, log: Log = print, device: str = "auto") -> dict:
     b = m.get("build") or {}
     if not b.get("ok"):
         raise ModelError("This pairing has not been built yet. Build it first.", 409)
-    if b.get("net_hash") != net_hash(m) or b.get("network_rev") != _net_head(m["network"]["id"]):
+    if b.get("net_hash") != net_hash(m) or b.get("network_rev") != head_of(m):
         raise ModelError("The network or the settings changed since the last build, so the snapshot has to be rebuilt.", 409)
     root = model_dir(mid) / "build"
     mpath = root / "MANIFEST.json"

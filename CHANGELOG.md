@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0 (2026-11-23)
+
+Pairings answer from native FG-MPN networks.
+
+- **Yaob Origin N119M answers.** A pairing whose network is an FG-MPN store (119.7 million records, 39.86 GB) finds the entities a question names through the
+  store's own indexes, follows relations one or two hops, supplies the records as numbered, cited nodes and asks the core, which is the same OpenAI-compatible
+  core path as for N10K. No embeddings, no copy of the store, no row is iterated. N10K (a Studio network with its learned router) is unchanged.
+- **In place.** A pairing records the store's path and the SHA-256 of its manifest; build and rebind check the manifest and file sizes, and "Verify" re-hashes on
+  request. Changing the core never touches or rebuilds the network.
+- **Status.** Quarantined records are kept and returned by explicit id with their status; they are never found by title, never evidence, never cited.
+- **Packages.** `mpn package inspect|import FOLDER_OR_ZIP` (and Settings, Releases, Pairings): a Yaob package (`manifest.json`, `fylume-package/1`) is verified, its
+  network and GGUF files are registered where they are, and its pairing is created. A zip is extracted once into Studio's folder.
+- A pairing that pins an FG-MPN-only network release no longer says Studio cannot answer from it. `mpn network import-fgmpn --verify size` registers a large store after a manifest and size check.
+- Correction: Yaob Origin N119M stores 280,844,705 edge rows (18,742,569 attached to nodes and 262,102,136 in-edges whose source is not a stored node); the earlier figure of 1,693,590,449 relationships is withdrawn.
+
 ## 0.5.0 (2026-11-23)
 
 Cognitive cores and official releases.

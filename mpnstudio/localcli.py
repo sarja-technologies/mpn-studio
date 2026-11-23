@@ -10,7 +10,7 @@
   mpn core add-server NAME --url http://HOST:PORT/v1 --model-id ID [--api-key-env VAR | --api-key-stdin] [--context N] [--max-output N]
                            a core on any OpenAI-compatible server (llama.cpp, vLLM, Ollama, hosted); its key is never printed
   mpn core test SERVER_ID | servers | remove-server SERVER_ID
-  mpn network list | create NAME | import-yaob FOLDER | import-mpn FILE.mpn [NAME] | import-fgmpn FOLDER [--copy] | import-store FILE NAME | duplicate ID NAME
+  mpn network list | create NAME | import-yaob FOLDER | import-mpn FILE.mpn [NAME] | import-fgmpn FOLDER [--copy] [--verify size|full] | import-store FILE NAME | duplicate ID NAME
               | specialise ID NAME [--mpn ID ...] [--q TEXT] [--type T] | merge TARGET SOURCE [--both] | compare A B | stats ID
               | delete-nodes ID [--mpn ID ...] [--q TEXT] [--all] [--yes]
   mpn model list | create NAME --core ID|endpoint:SERVER_ID --network ID [--encoder ID] | show ID | set ID key=value ... | build ID [--device D]
@@ -19,6 +19,9 @@
 
   mpn catalogue list [--kind mpn|core|model] | refresh | url | import FILE | install ID [--version V] [--format QUANT] [--server SERVER_ID]
   mpn release list | verify ID VERSION | remove KIND ID VERSION       what is installed from the catalogue
+  mpn package inspect FOLDER | import FOLDER_OR_ZIP [--verify size|full] [--no-pairing]
+                           a Yaob package (manifest.json fylume-package/1): checksums verified, network and GGUF files registered where they
+                           are, pairing created. A zip is extracted once into Studio's folder.
 
 Data lives in the same folders as the desktop app (~/.local/share/mpn-studio).
 """
@@ -31,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-LOCAL = {"run", "info", "verify", "core", "network", "model", "serve-root", "catalogue", "release"}
+LOCAL = {"run", "info", "verify", "core", "network", "model", "serve-root", "catalogue", "release", "package"}
 
 
 def _progress():
@@ -182,7 +185,7 @@ def cmd_network(a):
         _out(networks.import_mpn_network(ar[0], ar[1] if len(ar) > 1 else None, _progress()))
     elif a.action == "import-fgmpn":
         from .catalogue import install
-        _out(install.install_local_fgmpn(ar[0], ar[1] if len(ar) > 1 else None, a.copy, lambda l, d, t: sys.stderr.write(f"\r{l[:50]:<50} {100 * d / max(t, 1):5.1f} %")))
+        _out(install.install_local_fgmpn(ar[0], ar[1] if len(ar) > 1 else None, a.copy, lambda l, d, t: sys.stderr.write(f"\r{l[:50]:<50} {100 * d / max(t, 1):5.1f} %"), None, a.verify))
     elif a.action == "import-yaob":
         _out(networks.import_yaob_release(ar[0], ar[1] if len(ar) > 1 else "Yaob N10K"))
     elif a.action == "import-store":
@@ -326,6 +329,16 @@ def cmd_release(a):
         _out(install.uninstall(ar[0], ar[1], ar[2]))
 
 
+def cmd_package(a):
+    from .catalogue import package
+    if a.action == "inspect":
+        _out(package.inspect(a.args[0]))
+    else:
+        r = package.import_package(a.args[0], lambda l, d, t: sys.stderr.write(f"\r{l[:60]:<60} {100 * d / max(t, 1):5.1f} %"), None, a.verify, not a.no_pairing)
+        sys.stderr.write("\n")
+        _out(r)
+
+
 def main(argv: list[str]) -> None:
     ap = argparse.ArgumentParser(prog="mpn", description="MPN Studio: build and run MPN models on this computer.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -374,6 +387,7 @@ def main(argv: list[str]) -> None:
     n = sub.add_parser("network")
     n.add_argument("action", choices=["list", "create", "import-yaob", "import-store", "import-mpn", "import-fgmpn", "duplicate", "specialise", "merge", "compare", "stats", "delete-nodes"])
     n.add_argument("--copy", action="store_true", help="import-fgmpn: copy the store into Studio's folder instead of using it where it is")
+    n.add_argument("--verify", choices=["size", "full"], default="full", help="import-fgmpn: size = manifest and file sizes only (a store of tens of GB); full = every SHA-256")
     n.add_argument("args", nargs="*")
     n.add_argument("--mpn", action="append")
     n.add_argument("--q")
@@ -400,6 +414,12 @@ def main(argv: list[str]) -> None:
     ct.add_argument("--format", help="for a core: the quantisation or file to download")
     ct.add_argument("--server", help="for a pairing: use this configured core server instead of downloading the core")
     ct.set_defaults(fn=cmd_catalogue)
+    pk = sub.add_parser("package", help="Yaob packages (core + network + manifest)")
+    pk.add_argument("action", choices=["inspect", "import"])
+    pk.add_argument("args", nargs="+")
+    pk.add_argument("--verify", choices=["size", "full"], default="full", help="full = every SHA-256 (default); size = files and sizes only")
+    pk.add_argument("--no-pairing", action="store_true", help="register the network and the GGUF files, create no pairing")
+    pk.set_defaults(fn=cmd_package)
     rl = sub.add_parser("release", help="installed releases")
     rl.add_argument("action", choices=["list", "verify", "remove"])
     rl.add_argument("args", nargs="*")
@@ -410,6 +430,6 @@ def main(argv: list[str]) -> None:
     except KeyboardInterrupt:
         sys.exit(130)
     except Exception as e:      # library errors carry a message meant for the user
-        if type(e).__name__ in ("CoreError", "ModelError", "RunError", "MpnFileError", "ProjectError", "GGUFError", "CoreServerError", "InstallError", "CatalogueError", "DownloadError", "FgError"):
+        if type(e).__name__ in ("CoreError", "ModelError", "RunError", "MpnFileError", "ProjectError", "GGUFError", "CoreServerError", "InstallError", "CatalogueError", "DownloadError", "FgError", "PackageError"):
             raise SystemExit(f"error: {e}")
         raise

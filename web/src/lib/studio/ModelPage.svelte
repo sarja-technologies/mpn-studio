@@ -192,10 +192,10 @@
         <div>
           <label class="lbl" for="mp-net">MPN network</label>
           {#if m.network?.release && !m.network?.id}
-            <p class="problem small">{m.network.release.id} {m.network.release.version} is a read-only FG-MPN network. Studio explores those but cannot answer from one yet; choose a Studio network to build this pairing.</p>
+            <p class="muted small">{m.network.release.id} {m.network.release.version} is a read-only FG-MPN network, read where it is stored: it is not copied and has no embeddings. Choosing a Studio network below replaces it.</p>
           {/if}
           <select id="mp-net" class="field" value={m.network?.id ?? ''} onchange={(e) => set({ network_id: e.currentTarget.value })}>
-            {#if !m.network?.id}<option value="">Choose a network</option>{/if}
+            {#if !m.network?.id}<option value="">{m.network?.release ? `${m.network.release.id} (FG-MPN, read-only)` : 'Choose a network'}</option>{/if}
             {#each studio.data?.networks.filter((n) => !n.damaged) ?? [] as n (n.id)}<option value={n.id}>{n.name} ({fmtInt(n.nodes ?? 0)} nodes)</option>{/each}
           </select>
         </div>
@@ -206,7 +206,7 @@
             {#each studio.encoders as c (c.id)}<option value={c.id} disabled={!c.present}>{c.name}</option>{/each}
           </select>
           <p class="muted small">
-            {#if routerOk}Routing uses the network's learned router.{:else if net?.router}The network's learned router needs {net.router.encoder?.name}; without it the model routes by retrieval.{:else if m.encoder}Routing by meaning and text search.{:else}Routing by text search.{/if}
+            {#if m.network?.release && !m.network?.id}This network is read by entity linking over its own indexes; the encoder is not used.{:else if routerOk}Routing uses the network's learned router.{:else if net?.router}The network's learned router needs {net.router.encoder?.name}; without it the model routes by retrieval.{:else if m.encoder}Routing by meaning and text search.{:else}Routing by text search.{/if}
           </p>
         </div>
         <div>

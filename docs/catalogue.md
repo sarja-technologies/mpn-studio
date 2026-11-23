@@ -82,8 +82,8 @@ Studio installs only the payload it needs, plus small documents: the Releases vi
 (default: the primary one); a pairing install always takes `studio-store`. The two installs are separate and can coexist (`releases/mpn/<id>/<version>` and `<version>.studio-store`);
 the Studio payload becomes an ordinary network project, with its router attached. The trained router only works with the encoder it was trained with: when a pairing pins an encoder
 (`model.encoder`, same shape as `model.core`) Studio installs that GGUF into the encoder slot of the library, records its SHA-256 as the router's encoder (the same effect as placing it
-at `studio/models/encoder/encoder.gguf` before `import-yaob`) and puts it in the pairing. A pairing that pins an mpn without a usable `studio-store` payload is refused before anything is
-downloaded, with: "N10K 1.0.0 has no Studio payload (studio-store), so a pairing cannot answer from it; it carries only fgmpn ...". The Releases view shows the same sentence on the row.
+at `studio/models/encoder/encoder.gguf` before `import-yaob`) and puts it in the pairing. A pairing that pins an mpn takes its `studio-store` payload when it has one (N10K: the learned router and encoder) and otherwise its `fgmpn` store, which it reads where it is
+installed, natively, with no embeddings (N119M; see [fgmpn-answering.md](fgmpn-answering.md)). A release with neither is refused before anything is downloaded.
 
 ### Manifest fields Studio relies on (`fylume-release/1`, see the website's `docs/release-manifest-spec.md`)
 

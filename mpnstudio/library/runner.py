@@ -72,6 +72,9 @@ def export(mid: str, dest: str | Path, mode: str = "complete", progress: Progres
     m = models.get(mid)
     if m["status"]["state"] != "ready":
         raise RunError("Build the model (and let its test pass) before exporting. " + " ".join(m["status"]["problems"]), 409)
+    if models.is_fg(m):
+        raise RunError("This pairing reads a read-only FG-MPN network where it is stored (it is not copied), so there is no network file to put in a .mpn "
+                       "file. Share the pairing by its release instead.", 409)
     if (m.get("core") or {}).get("endpoint_id"):
         raise RunError("This pairing answers with a core on a server, so there are no weights to put in a .mpn file. "
                        "Choose a core Studio serves (a GGUF in the library), then export.", 409)

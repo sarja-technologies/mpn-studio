@@ -1,6 +1,6 @@
 // Official releases (fylume-release/1): the catalogue Studio reads, what is installed, and installs in progress.
 import { get, post, del, errText } from '../api';
-import { pickFile } from '../desktop.svelte';
+import { pickFile, pickFolder } from '../desktop.svelte';
 import { app } from '../state.svelte';
 import { studio, type TaskView } from './studio.svelte';
 
@@ -49,7 +49,7 @@ export interface InstalledRelease {
   origin?: string;
   installed_at: string;
   verified_at?: string;
-  licence?: { spdx: string | null };
+  licence?: { spdx: string | null; notes?: string | null; label?: string | null };
   store?: { nodes: number; segments: number };
   store_path?: string;
   project?: string;
@@ -79,6 +79,7 @@ class Catalogue {
   error = $state<string | null>(null);
   refreshing = $state(false);
   installs = $state.raw<Record<string, InstallState>>({});
+  pkg = $state.raw<InstallState | null>(null);                // a Yaob package being imported (folder or zip)
 
   async load() {
     try {
@@ -111,6 +112,28 @@ class Catalogue {
     } catch (e) {
       app.toast(errText(e), 'error');
     }
+  }
+  /** A Yaob package (manifest.json fylume-package/1): verified, registered where it is, its pairing created. */
+  async importPackage(how: 'folder' | 'zip') {
+    if (this.pkg?.task?.state === 'running') return;
+    const p = how === 'zip' ? await pickFile('Choose a Yaob package (.zip)', ['zip']) : await pickFolder('Choose the package folder (the one that contains manifest.json)');
+    if (!p) return;
+    this.pkg = { task: null, error: null };
+    try {
+      const t = await studio.follow(post<TaskView>('api/packages/import', { path: p, verify: 'full' }), (t) => (this.pkg = { task: t, error: null }));
+      if (t.state === 'done') {
+        this.pkg = { task: null, error: null, done: true };
+        app.toast(t.result?.already ? 'That package was already imported.' : 'The package is imported. Its pairing is in Pairings.');
+      } else if (t.state === 'cancelled') this.pkg = { task: null, error: 'Cancelled. Nothing was registered.' };
+      else this.pkg = { task: null, error: t.error ?? 'The import did not finish.' };
+    } catch (e) {
+      this.pkg = { task: null, error: errText(e) };
+    }
+    await Promise.all([this.load(), studio.load()]);
+  }
+  cancelPackage() {
+    const t = this.pkg?.task;
+    if (t) studio.cancel(t.id);
   }
   async removeLocal(r: Release) {
     await del(`api/catalogue/local/${r.kind}/${r.id}/${r.version}`);

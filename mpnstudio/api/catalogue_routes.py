@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import __version__
-from ..catalogue import install, manifest as mf, source
+from ..catalogue import install, manifest as mf, package, source
 from ..catalogue.download import DownloadError
 from ..library import coreconf, models, networks
 from ..mpnnet import fgmpn_local
@@ -84,7 +84,7 @@ def prog(t):
 
 
 def register(app: FastAPI, start_task: Callable) -> None:
-    for exc in (source.CatalogueError, install.InstallError, DownloadError, coreconf.CoreServerError, fgmpn_local.FgError, mf.ManifestError):
+    for exc in (source.CatalogueError, install.InstallError, DownloadError, coreconf.CoreServerError, fgmpn_local.FgError, mf.ManifestError, package.PackageError):
         @app.exception_handler(exc)
         async def _err(_: Request, e: Exception):
             return JSONResponse({"error": str(e), "code": getattr(e, "code", None)}, status_code=getattr(e, "status", 400))
@@ -153,10 +153,24 @@ def register(app: FastAPI, start_task: Callable) -> None:
     def releases_remove(kind: str, rid: str, version: str, format: str | None = None):
         return install.uninstall(kind, rid, version, format)
 
+    @app.post("/api/packages/inspect")
+    def packages_inspect(body: dict):
+        """What a package folder says about itself and whether its files are all there at the right size (reads no file's contents)."""
+        return package.inspect(_abs(body.get("path"), "package folder"))
+
+    @app.post("/api/packages/import")
+    def packages_import(body: dict):
+        """body: {path (a package folder or .zip), verify?: "full"|"size", pairing?: true}. Verifies, registers the network and GGUF files where they
+        are (a zip is extracted once into Studio's folder), and creates the pairing. Runs as a task; the result is in its `result`."""
+        p = _abs(body.get("path"), "package folder or zip")
+        vf, pairing = body.get("verify") or "full", body.get("pairing", True) is not False
+        return start_task("package-import", f"Import {Path(p).name}", lambda t: package.import_package(p, prog(t), t.cancel, vf, pairing)).view()
+
     @app.post("/api/releases/fgmpn")
     def releases_add_fgmpn(body: dict):
         p, name, copy = _abs(body.get("path"), "FG-MPN folder"), body.get("name"), bool(body.get("copy"))
-        return start_task("release-install", f"Add {Path(p).name}", lambda t: install.install_local_fgmpn(p, name, copy, prog(t), t.cancel)).view()
+        vf = body.get("verify") or "full"
+        return start_task("release-install", f"Add {Path(p).name}", lambda t: install.install_local_fgmpn(p, name, copy, prog(t), t.cancel, vf)).view()
 
     @app.post("/api/releases/{rid}/{version}/open")
     def releases_open(rid: str, version: str):

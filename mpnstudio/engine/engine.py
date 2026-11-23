@@ -37,6 +37,7 @@ from mpnstudio.store.db import Store, now, sid
 
 from .encoder import Encoder
 from .extcore import ExternalCore
+from .fgreason import FgNetwork, FgRetriever, proc_counters
 from .llama import LlamaError, LlamaServer, choose_variant, gpu_snapshot
 from .prompts import MPN_TOOLS, PROMPTS, QUESTION_PREFIX, apply_identity, render_node
 from . import toolmarkup
@@ -163,6 +164,10 @@ class Engine:
         self.enc: Encoder | None = None
         self.store: Store | None = None
         self.ck: Checkpoint | None = None
+        # a native FG-MPN network (the Yaob Origin N119M): the store stays where it is, memory-mapped; no snapshot, no embeddings
+        self.fg_root: Path | None = Path(man["paths"]["fgmpn"]) if (man.get("paths") or {}).get("fgmpn") else None
+        self.fg: FgNetwork | None = None
+        self.fgr: FgRetriever | None = None
         self.variant = None
         self.devices: list[dict] = []
         self.core_info: dict = {}
@@ -222,11 +227,19 @@ class Engine:
 
     def _load(self, log) -> dict:
         t0 = time.perf_counter()
-        self.store = Store(self.working_store())
-        ckp = self.p("checkpoint")
-        # a network without a trained router (any network built in MPN Studio) is routed by retrieval instead
-        self.ck = Checkpoint(ckp) if (ckp / "shards" / "shared.safetensors").exists() else None
-        has_enc = self.p("encoder").exists()
+        if self.fg_root is not None:
+            log(f"Opening the FG-MPN network {self.fg_root.name} in place ...")
+            self.fg = FgNetwork(self.fg_root)
+            self.fgr = FgRetriever(self.fg)
+            self.store, self.ck = None, None
+            log(f"FG-MPN network open in {self.fg.open_s} s (generation {self.fg.generation}, {self.fg.identity['stored_records']:,} stored records)")
+            has_enc = False                       # no embeddings: retrieval is lexical entity linking over the store's own indexes
+        else:
+            self.store = Store(self.working_store())
+            ckp = self.p("checkpoint")
+            # a network without a trained router (any network built in MPN Studio) is routed by retrieval instead
+            self.ck = Checkpoint(ckp) if (ckp / "shards" / "shared.safetensors").exists() else None
+            has_enc = self.p("encoder").exists()
         ext = self.core_endpoint
         if ext and not has_enc:        # nothing for llama.cpp to run here: the core is on a server and there is no encoder
             variant, bindir, devs = "remote", None, []
@@ -324,6 +337,13 @@ class Engine:
             if self.store is not None:
                 self.store.close()
                 self.store = None
+            if self.fg is not None:
+                for sg in self.fg.store.segments:
+                    try:
+                        sg.close()
+                    except Exception:
+                        pass
+                self.fg = self.fgr = None
             self._flat = None
         return {"unloaded": True}
 
@@ -369,7 +389,8 @@ class Engine:
                 pass
         if self.enc:
             st["encoder"].update({"name": (self.manifest.get("encoder") or {}).get("name") or "Qwen3-Embedding-0.6B", "dim": self.enc.dim, "trained_here": False})
-        st["routing"] = "learned router" if self.ck else ("retrieval: encoder and text search" if self.enc else "retrieval: text search only")
+        st["routing"] = ("FG-MPN entity linking (no embeddings)" if self.fg else "learned router" if self.ck
+                         else ("retrieval: encoder and text search" if self.enc else "retrieval: text search only"))
         st["model"] = {"id": self.model_id, "name": self.model_name}
         if self.ck:
             m = self.ck.manifest
@@ -378,7 +399,9 @@ class Engine:
                                 "per_node_parameters": rp.get("per_node_total"), "specialist_adapters": "not used (trained for the previous core)"}
             st["residency"] = {"shards": self.ck.shards.residency(), "shard_bytes": self.ck.shards.bytes(), "stats": self.ck.shards.stats,
                                "shared_router_bytes": self.ck.router.bytes}
-        if self.store:
+        if self.fg:
+            st["network"] = {**self.fg.describe(), "calls": dict(self.fg.calls), "memory": proc_counters()}
+        elif self.store:
             st["network"] = self.store.counts()
             st["network"]["path"] = str(self.store.path) if hasattr(self.store, "path") else None
         return st
@@ -386,6 +409,8 @@ class Engine:
     # ------------------------------------------------------------------ indexing for new and edited nodes
     def reindex(self, limit: int = 4000) -> dict:
         """Embed live nodes whose text changed since the router was trained (or that are new) into the overlay."""
+        if self.fg is not None:
+            return {"indexed": 0, "pending": 0, "more": False, "note": "an FG-MPN network has no embedding index"}
         if self.enc is None:
             return {"indexed": 0, "reason": "no encoder: retrieval uses text search only"}
         rows = self.store.q("SELECT n.node_id, n.title, n.cells, n.content_hash FROM node_v n LEFT JOIN derived_state d ON d.node_id=n.node_id "
@@ -833,7 +858,7 @@ class Engine:
         b = dict(self.budget)
         b.update({k: v for k, v in (budget or {}).items() if k in DEFAULT_BUDGET or k in ("sampling", "seed", "requested_output_tokens")})
         think = bool(b.get("think_default", False)) if think is None else bool(think)
-        rev = self.store.head() if rev is None else int(rev)
+        rev = (self.store.head() if self.store else (self.fg.generation if self.fg else 0)) if rev is None else int(rev)
         req = Request(request_id or uuid.uuid4().hex[:12], mode, rev, think, b)
         if not self.sem.acquire(timeout=300):
             self.counters["refused"] += 1
@@ -894,7 +919,19 @@ class Engine:
         ev["routing_query"] = {"used_history": used_history, "small_talk": small_talk}
         chosen: list[dict] = []
         t_r = time.perf_counter()
-        if req.mode == "yaob" and not small_talk:
+        notes: list[str] = []
+        if self.fgr is not None:
+            # a native FG-MPN network: entity linking over the store's indexes, bounded relation following, no embeddings
+            active = []
+            if req.mode in ("yaob", "retrieval") and not small_talk:
+                c0 = proc_counters()
+                r = self.fgr.retrieve(question, expand=req.mode == "yaob", max_nodes=int(b["text_nodes"]) + 2)
+                if not r["cands"] and used_history:
+                    r = self.fgr.retrieve(rq, expand=req.mode == "yaob", max_nodes=int(b["text_nodes"]) + 2)
+                chosen = r["cands"]
+                notes = [n["text"] for n in r["trace"]["notices"]]
+                ev["fgmpn"] = {**r["trace"], "io": proc_counters(c0)}
+        elif req.mode == "yaob" and not small_talk:
             routed = self.route(req.rev, rq, b)
             ev.update(routed["evidence"])
             chosen = self.select(req.rev, routed, b)
@@ -905,11 +942,11 @@ class Engine:
         else:
             active = []
         ev["ms"] = round((time.perf_counter() - t_r) * 1000, 2)
-        text_nodes = [c for c in chosen if c["node"]["type"] != "procedure"][: int(b["text_nodes"]) if req.mode == "yaob" else max(int(b["text_nodes"]), 1)]
-        if req.mode == "yaob" and b.get("referral_mode", "relation") == "relation":
+        text_nodes = [c for c in chosen if c["node"]["type"] != "procedure"][: (int(b["text_nodes"]) + (2 if self.fgr is not None else 0)) if req.mode == "yaob" else max(int(b["text_nodes"]), 1)]
+        if req.mode == "yaob" and self.fgr is None and b.get("referral_mode", "relation") == "relation":
             srcs = {c["node"]["title"] for c in text_nodes}
             text_nodes += [c for c in chosen if c.get("asked") and c.get("from") in srcs and c not in text_nodes][:2]
-        if req.mode == "yaob" and not small_talk and b.get("entity_rescue", True):
+        if req.mode == "yaob" and not small_talk and self.fgr is None and b.get("entity_rescue", True):
             for c in self.entity_rescue(req.rev, question, text_nodes + chosen):
                 chosen.append(c)
                 text_nodes.append(c)
@@ -942,20 +979,21 @@ class Engine:
         lim = dict(limits)
         if images:
             lim["margin"] = limits["margin"] + IMAGE_TOKENS * len(images)
-        packed = tokbudget.pack(core, system, history, text_nodes, "", question, lim, render)
+        note_text = "\n".join(f"Note: {n}" for n in notes)
+        packed = tokbudget.pack(core, system, history, text_nodes, note_text, question, lim, render)
         ev["reductions"] += packed["reductions"]
         if packed.get("error"):
             yield "error", packed["error"]
             return
         text_nodes, history = packed["text_nodes"], packed["history"]
         evidence = list(text_nodes)
-        body_text = ("Knowledge nodes:\n" + render(text_nodes) + "\n\n" if text_nodes else "") + QUESTION_PREFIX + question
+        body_text = ("Knowledge nodes:\n" + render(text_nodes) + "\n\n" if text_nodes else "") + (note_text + "\n\n" if note_text else "") + QUESTION_PREFIX + question
         user_content = body_text if not images else images + [{"type": "text", "text": body_text}]
         convo = [{"role": "system", "content": system}] + history + [{"role": "user", "content": user_content}]
         for m in tail:     # client tool calls and their results, passed through unchanged
             convo.append({k: m[k] for k in ("role", "content", "tool_calls", "tool_call_id", "name") if k in m and m[k] is not None}
                          | ({"content": _text_of(m.get("content"))} if m.get("role") == "tool" else {}))
-        names = {int(m["id"]): m["name"] for m in self.store.mpns(req.rev)}
+        names = {} if self.fgr is not None else {int(m["id"]): m["name"] for m in self.store.mpns(req.rev)}
         ev["nodes"] = [self._node_ev(c, names, text_nodes) for c in chosen]
         ev["budget"] = {"context": limits["context"], "output": packed["output"], "input_tokens": packed["n_prompt"], "breakdown": packed["breakdown"],
                         "tool_rounds": n_rounds, "think": req.think}
@@ -1102,6 +1140,11 @@ class Engine:
         return m
 
     def _node_ev(self, c: dict, names: dict, text_nodes: list) -> dict:
+        if self.fgr is not None:
+            n = c["node"]
+            return {"id": sid(c["id"]), "title": n["title"], "type": n.get("kind") or n["type"], "mpn_id": None, "mpn": n.get("dataset") or "", "key": n.get("key"),
+                    "status": n.get("fg_status"), "score": round(float(c["score"]), 3), "gate": round(float(c["gate"]), 3), "read_as": ["text"] if c in text_nodes else [],
+                    "via": c["via"], "state": "stored (read in place)", **({"relation": c["relation"], "from": c["from"]} if c.get("relation") else {})}
         info = self.ck.nodes.get(c["id"], {}) if self.ck else {}
         cur = c["node"]["content_hash"]
         state = "trained" if info.get("key_trained") and info.get("hash") == cur else ("edited since training" if info else "not trained")
@@ -1129,6 +1172,8 @@ class Engine:
             return {"content": content, "summary": content[:200]}
         have = {c["id"] for c in evidence}
         new: list[dict] = []
+        if self.fgr is not None and name in ("mpn_search", "mpn_follow"):
+            return self._tool_fg(name, args, evidence, ev, have, focus)
         if name == "mpn_search":
             q = str(args.get("query", "")).strip()[:300]
             if q:
@@ -1203,6 +1248,39 @@ class Engine:
         txt = "\n\n".join(render_node(c["node"], i, focus=focus) for i, c in enumerate(new, start=start))
         return {"content": "Knowledge nodes:\n" + txt, "summary": ", ".join(f"[{i}] {c['node']['title']}" for i, c in enumerate(new, start=start))}
 
+    def _tool_fg(self, name: str, args: dict, evidence: list, ev: dict, have: set, focus) -> dict:
+        """mpn_search / mpn_follow over a native FG-MPN network. Validated records only; numbering continues after the supplied nodes."""
+        new: list[dict] = []
+        links: list[str] = []
+        if name == "mpn_search":
+            q = str(args.get("query", "")).strip()[:300]
+            if q:
+                new = self.fgr.search_query(q, have, 3)
+            ev["searches"].append({"tool": "mpn_search", "query": q, "found": [c["node"]["title"] for c in new]})
+            if not new and evidence:
+                listed = "; ".join(f"[{i}] {c['node']['title']}" for i, c in enumerate(evidence, start=1))
+                return {"content": f"The matching nodes are the ones already supplied: {listed}. Answer the question from their text.", "summary": "no further nodes", "fruitless": True}
+        else:
+            try:
+                k = int(args.get("node"))
+            except (TypeError, ValueError):
+                k = 0
+            rel = str(args.get("relation", "any")).strip().lower().replace("-", "_")
+            if 1 <= k <= len(evidence):
+                new, links = self.fgr.follow_relation(evidence[k - 1], rel, have, 4)
+            ev["searches"].append({"tool": "mpn_follow", "node": k, "relation": rel, "found": [c["node"]["title"] for c in new]})
+            if not new:
+                msg = f"No {rel} link from node [{k}]." + (f" Its links: {', '.join(links[:20])}." if links else "")
+                return {"content": msg, "summary": msg}
+        start = len(evidence) + 1
+        evidence.extend(new)
+        for c in new:
+            ev["nodes"].append({**self._node_ev(c, {}, new), "read_as": ["text"]})
+        if not new:
+            return {"content": "No matching nodes in the network.", "summary": "no nodes"}
+        txt = "\n\n".join(render_node(c["node"], i, focus=focus) for i, c in enumerate(new, start=start))
+        return {"content": "Knowledge nodes:\n" + txt, "summary": ", ".join(f"[{i}] {c['node']['title']}" for i, c in enumerate(new, start=start))}
+
     # ------------------------------------------------------------------ deterministic checks
     def validate(self, answer: str, chosen: list[dict], evidence: list[dict], procs: list[dict], question: str) -> dict:
         citations = []
@@ -1210,6 +1288,7 @@ class Engine:
             n = c["node"]
             src = next((s for s in n.get("sources", []) if s["kind"] in ("wikipedia", "user", "authored", "synthetic")), None) or (n.get("sources") or [None])[0]
             citations.append({"n": i, "node_id": sid(c["id"]), "title": n["title"], "cited": f"[{i}]" in answer,
+                              **({"key": n.get("key"), "status": n.get("fg_status"), "dataset": n.get("dataset")} if self.fgr is not None else {}),
                               "source": {k: src.get(k) for k in ("title", "url", "license", "revision", "kind")} if src else None})
         checks = []
         pool = {c["id"]: c for c in chosen + evidence}.values()

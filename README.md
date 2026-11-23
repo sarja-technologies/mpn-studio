@@ -33,19 +33,24 @@ Get the files from the [Releases page](https://github.com/sarja-technologies/mpn
 
 | File | For |
 |---|---|
-| `mpn-studio_0.5.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
-| `MPN-Studio_0.5.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
+| `mpn-studio_0.6.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
+| `MPN-Studio_0.6.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
 | `SHA256SUMS-x86_64` | Checksums for the x86-64 files |
-| `mpn-studio_0.5.0_arm64.deb` | Ubuntu and Debian on ARM64 (NVIDIA DGX Spark and other ARMv8.2+ machines) |
-| `MPN-Studio_0.5.0_aarch64.AppImage` | Other ARM64 Linux with GTK 3 and WebKitGTK 4.1 |
+| `mpn-studio_0.6.0_arm64.deb` | Ubuntu and Debian on ARM64 (NVIDIA DGX Spark and other ARMv8.2+ machines) |
+| `MPN-Studio_0.6.0_aarch64.AppImage` | Other ARM64 Linux with GTK 3 and WebKitGTK 4.1 |
 | `SHA256SUMS-aarch64` | Checksums for the ARM64 files |
 
 ```sh
 sha256sum -c SHA256SUMS-x86_64 --ignore-missing        # or SHA256SUMS-aarch64
-sudo apt install ./mpn-studio_0.5.0_amd64.deb          # menu entry "MPN Studio"; commands mpn-studio and mpn (arm64 on ARM64)
+sudo apt install ./mpn-studio_0.6.0_amd64.deb          # menu entry "MPN Studio"; commands mpn-studio and mpn (arm64 on ARM64)
 # or
-chmod +x MPN-Studio_0.5.0_x86_64.AppImage && ./MPN-Studio_0.5.0_x86_64.AppImage
+chmod +x MPN-Studio_0.6.0_x86_64.AppImage && ./MPN-Studio_0.6.0_x86_64.AppImage
 ```
+
+0.6 answers from FG-MPN networks: a pairing can use the 119.7 million record Yaob Origin N119M (or any FG-MPN store) with any cognitive core,
+reading the store where it is, with no copy and no embeddings ([docs/fgmpn-answering.md](docs/fgmpn-answering.md)). `mpn package import` takes a Yaob package
+(a folder or a zip) and makes its pairing. Yaob Origin N119M stores 280,844,705 edge rows (18,742,569 attached to nodes and 262,102,136 in-edges whose source
+is not a stored node); an earlier statement of 1,693,590,449 relationships was wrong.
 
 0.5 opens 0.4 projects as they are. It adds cognitive cores on any OpenAI-compatible server, pairings whose core can be changed without
 rebuilding the network, the official releases catalogue ([docs/catalogue.md](docs/catalogue.md)), and FG-MPN networks that open out of
@@ -55,10 +60,9 @@ the box: the app carries the public [FG-MPN runtime](https://github.com/sarja-te
 The packages include llama.cpp builds for CPU, CUDA (NVIDIA) and, on x86-64, Vulkan, and use the first that finds a
 usable device. The NVIDIA or Vulkan driver must already be installed; without a GPU, models run on the CPU.
 
-Tested for 0.5.0: x86-64 packages on Ubuntu 26.04 (the .deb's backend headless, the AppImage in a real window) and ARM64 packages
-on the NVIDIA DGX Spark (the .deb's backend headless), against the live catalogue and the public Hugging Face packages; see
-[docs/desktop/ACCEPTANCE.md](docs/desktop/ACCEPTANCE.md) for what was and was not run. CUDA and Vulkan inference of this release,
-other distributions and AMD and Intel GPUs are untested. There is no Windows or macOS build.
+Tested for 0.6.0: the headless backends of the x86-64 and ARM64 .deb packages against the live catalogue and the public Hugging Face packages, and Yaob Origin N119M
+answered, re-bound and imported as a package on ARM64; no window was driven for this release. See [docs/desktop/ACCEPTANCE.md](docs/desktop/ACCEPTANCE.md) for what was and was not run. CUDA and Vulkan
+inference of this release, other distributions and AMD and Intel GPUs are untested. There is no Windows or macOS build.
 
 ## Projects
 

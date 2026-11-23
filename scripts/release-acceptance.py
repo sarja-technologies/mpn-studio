@@ -188,7 +188,8 @@ code, out, err = mpn("catalogue", "install", "yaob-next-n10k-c4b", *([] if args.
 check("the pairing installs from the three pinned public repositories" + (" (own core)" if args.local_core else " (core on server A)"), code == 0, f"{time.time() - t0:.0f} s" + (f" {err.strip()[-200:]}" if code else ""))
 code, out, err = mpn("release", "list")
 say("installed:\n" + out.rstrip())
-MID = "yaob-next-n10k-c4b"
+# the pairing is named by the release (a published manifest names it differently from a draft): take the one just installed
+MID = mpn("model", "list")[1].split()[0]
 code, out, err = mpn("model", "show", MID)
 m0 = json.loads(out) if code == 0 else {}
 check("the pairing refers to the network, the encoder and its core", bool(m0.get("network", {}).get("id")) and bool((m0.get("encoder") or {}).get("sha256")) and bool(m0.get("core")), json.dumps({"core": (m0.get("core") or {}).get("name"), "network": (m0.get("network") or {}).get("id")}))

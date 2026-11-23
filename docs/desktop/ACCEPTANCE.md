@@ -1,5 +1,37 @@
 # Acceptance evidence
 
+## MPN Studio 0.6.0 (23 November 2026)
+
+Packages: `mpn-studio_0.6.0_amd64.deb` (7a5b124b...), `MPN-Studio_0.6.0_x86_64.AppImage` (d412f8f1...), `mpn-studio_0.6.0_arm64.deb` (891cdcd5...),
+`MPN-Studio_0.6.0_aarch64.AppImage` (1cee1073...); full checksums in the release's `SHA256SUMS-x86_64` and `SHA256SUMS-aarch64`. The ARM64 packages were
+built natively on the NVIDIA DGX Spark (Python 3.12), the x86-64 packages on a shared Ubuntu 26.04 build server (Python 3.14) with the Rust toolchain
+and the WebKitGTK development files kept in a private folder and overlaid on `/usr` for the build only. Each build ran the tests first: 301 passed, 35 skipped
+(they need torch, the 119.7-million-record store or the Spark), on both machines.
+
+`scripts/release-acceptance.py` (live catalogue, public Hugging Face packages, empty home folder, the packaged backend headless): **34 of 34 on x86-64 and 34 of 34 on ARM64.**
+On x86-64 the pairing's core was a llama.cpp server on another machine; on ARM64 it was the pinned `Qwen3.5-4B-Q8_0.gguf` run by the package's llama.cpp on the CPU.
+The N10K pairing (a Studio store, learned router, encoder embeddings) built with network hash `614948c6df233410` on both, answered "Which city is the capital of Australia?"
+with a citation, and was rebound to a second core with the hash unchanged. The same pairing built by the 0.5.0 backend has the same hash (below).
+
+**Yaob Origin N119M with the packaged ARM64 backend** (the released store, read only, on the Spark; a package folder whose store and core are symlinks, so nothing is copied):
+
+| Step | Result |
+|---|---|
+| `mpn package import --verify full` | 52.9 s, 53 MiB resident; both files registered in place, nothing extracted; pairing created |
+| build (core A: llama.cpp server, Qwen3.5-4B Q8_0) | 3.3 s; `network_rev gen3:0115ab9736276a35`, `net_hash f1643acee295aee3`, routing `fgmpn`; Studio's own data 4.2 kB |
+| three questions, core A | "Where was Sujata Nahar born?": Kolkata [1]; "In which country is the place where Alessandro Racchetti was born?": Italy, through Genoa [1][2]; the publication year of an OpenAlex paper: 2025 [1]; every answer ends with its Sources line naming supplied nodes |
+| core B (llama.cpp server, Qwen3-4B-Instruct-2507 Q8_0), Apply core | 1.3 s; `network_rev` and `net_hash` unchanged, configuration hash `28a08fc54a5860bd` to `5c489465c5dea296` |
+| the same three questions, core B | the same three answers, cited |
+| the store | the listing of every file's size and modification time, and the manifest's SHA-256 (`0115ab97...`), identical before and after; Studio's data 34 kB at the end |
+
+**An existing 0.5.0 data folder** (made by the 0.5.0 ARM64 backend: two installed FG-MPN networks, a Studio-store network, a pairing built with a server core) opened in the 0.6.0 backend:
+the pairing is "ready" with its 0.5.0 build (hash `614948c6df233410`), answered with no rebuild, `release verify` passes, the four projects list and an FG-MPN network opens in the explorer (10,007 nodes).
+Only `INSTALL.json` (the verification time) and the new explorer project changed.
+
+**Not tested for 0.6.0.** No window was driven: the AppImages were run only as `mpn` (x86-64: `catalogue refresh`, `package`; ARM64: `catalogue`), the interface was built and unit-tested but not looked at in a real window on either architecture
+(0.5.0's window run is the last one). Neither `.deb` was installed with `apt`; both were unpacked and their backend run. N119M was answered on ARM64 only (the store lives there). CUDA and Vulkan inference, other
+distributions, AMD and Intel GPUs. The packages are not signed.
+
 ## MPN Studio 0.5.0 (23 November 2026)
 
 What was built and what was tested, exactly. Packages: `mpn-studio_0.5.0_amd64.deb` (771cbd7f...), `MPN-Studio_0.5.0_x86_64.AppImage`

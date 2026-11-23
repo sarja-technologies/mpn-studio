@@ -52,12 +52,28 @@
     <span class="grow"></span>
     <button class="btn quiet" disabled={catalogue.refreshing} onclick={() => catalogue.refresh()}>{catalogue.refreshing ? 'Refreshing' : 'Refresh'}</button>
     <button class="btn quiet" onclick={() => catalogue.importManifest()}>Import manifest file</button>
+    {#if kind === 'model'}
+      <button class="btn quiet" disabled={catalogue.pkg?.task?.state === 'running'} onclick={() => catalogue.importPackage('folder')}>Import package folder</button>
+      <button class="btn quiet" disabled={catalogue.pkg?.task?.state === 'running'} onclick={() => catalogue.importPackage('zip')}>Import package zip</button>
+    {/if}
     <button class="btn quiet" onclick={() => (desk.settings = 'catalogue')}>Catalogue settings</button>
   </div>
   <p class="muted small src">
     {#if fetched}Read from {url}, {when(fetched)}.{:else}Catalogue {url}, not read yet.{/if}{#if note}<span>{" " + note}</span>{/if}
   </p>
   {#if catalogue.error}<p class="error-line">{catalogue.error}</p>{/if}
+  {#if kind === 'model' && catalogue.pkg}
+    {#if catalogue.pkg.task?.state === 'running'}
+      <div class="row pk">
+        <div class="bar grow"><i style="width:{pct(catalogue.pkg.task) ?? 0}%"></i></div>
+        <span class="muted num">{pct(catalogue.pkg.task) ?? 0}%</span>
+        <button class="btn" onclick={() => catalogue.cancelPackage()}>Cancel</button>
+      </div>
+      <p class="muted small">{catalogue.pkg.task.progress.label}</p>
+    {:else if catalogue.pkg.error}
+      <p class="error-line">{catalogue.pkg.error}</p>
+    {/if}
+  {/if}
 
   {#if all.length}
     <table class="list">
@@ -173,6 +189,10 @@
   .head {
     gap: 8px;
     flex-wrap: wrap;
+  }
+  .pk {
+    gap: 8px;
+    align-items: center;
   }
   .src {
     margin: 0;

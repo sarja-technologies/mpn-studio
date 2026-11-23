@@ -350,6 +350,8 @@ def verify_installed(kind: str, rid: str, version: str, progress: Progress | Non
     if v["ok"]:
         path = rec.pop("path")
         rec["verified_at"] = v["verified_at"]
+        rec["verified"] = "full"
+        rec["warnings"] = [w for w in rec.get("warnings") or [] if "full SHA-256 check was not run" not in w]
         _write_json(Path(path) / "INSTALL.json", rec)
     return v
 
@@ -415,15 +417,24 @@ def resolve_pin(kind: str, pin: dict) -> dict:
     return r
 
 
+def pairing_payload(mpn_r: dict) -> str | None:
+    """The payload of a network release that a pairing answers from: the Studio payload when the release has one (the learned router,
+    N10K), else the FG-MPN store, read in place. None when it has neither."""
+    for fmt in ("studio-store", "fgmpn"):
+        if any(p["format"] == fmt and p["ok"] for p in mpn_r.get("payloads") or []):
+            return fmt
+    return None
+
+
 def studio_payload_problem(mpn_r: dict) -> str | None:
-    """Why a pairing cannot answer from this network release, or None when it carries a usable Studio payload."""
-    if any(p["format"] == "studio-store" and p["ok"] for p in mpn_r.get("payloads") or []):
+    """Why a pairing cannot answer from this network release, or None when it carries a payload Studio answers from."""
+    if pairing_payload(mpn_r):
         return None
     have = [p["format"] for p in mpn_r.get("payloads") or []]
-    bad = next((p["reason"] for p in mpn_r.get("payloads") or [] if p["format"] == "studio-store" and not p["ok"]), None)
-    return (f"{mpn_r['name']} {mpn_r['version']} has no Studio payload (studio-store), so a pairing cannot answer from it"
-            + (f": {bad}" if bad else (f"; it carries only {', '.join(have)}, which Studio can explore (read-only) but not answer from" if have else ""))
-            + ". Ask for a release that carries studio/network/yaob-n10k.sqlite, or use a network you imported.")
+    bad = next((p["reason"] for p in mpn_r.get("payloads") or [] if not p["ok"]), None)
+    return (f"{mpn_r['name']} {mpn_r['version']} has no payload a pairing can answer from (studio-store or fgmpn)"
+            + (f": {bad}" if bad else (f"; it carries {', '.join(have)}" if have else ""))
+            + ". Ask for a release that carries an FG-MPN store or studio/network/yaob-n10k.sqlite, or use a network you imported.")
 
 
 def install_model(r: dict, progress: Progress | None = None, cancel: threading.Event | None = None, core_endpoint: str | None = None,
@@ -447,7 +458,8 @@ def install_model(r: dict, progress: Progress | None = None, cancel: threading.E
         enc_r = resolve_pin("core", d["encoder"])
         check_compatible(enc_r)
     # room for everything before downloading anything
-    parts = [(mpn_r, None, "studio-store")] + ([(core_r, core_file or d["core"].get("file"), None)] if core_r else []) + \
+    pfmt = pairing_payload(mpn_r)
+    parts = [(mpn_r, None, pfmt)] + ([(core_r, core_file or d["core"].get("file"), None)] if core_r else []) + \
             ([(enc_r, d["encoder"].get("file"), None)] if enc_r else [])
     need = sum(plan(x, f, fmt=fm)["remaining_bytes"] for x, f, fm in parts)
     free = free_bytes(releases_dir() if releases_dir().exists() else paths.data_dir())
@@ -460,7 +472,7 @@ def install_model(r: dict, progress: Progress | None = None, cancel: threading.E
             if progress:
                 progress(f"{i + 1}/{n} {label}", done, tot)
         return p
-    mrec = install(mpn_r, sub(0), cancel, fmt="studio-store")
+    mrec = install(mpn_r, sub(0), cancel, fmt=pfmt)
     crec = install(core_r, sub(1), cancel, core_file or d["core"].get("file")) if core_r else None
     erec = install(enc_r, sub(n - 1), cancel, d["encoder"].get("file")) if enc_r else None
     if erec and mrec.get("project"):         # the router was trained for this encoder: say which file that is
@@ -472,9 +484,14 @@ def install_model(r: dict, progress: Progress | None = None, cancel: threading.E
 
 # ------------------------------------------------------------------------------------------------ a folder the user already has
 def install_local_fgmpn(path: str | Path, name: str | None = None, copy: bool = False, progress: Progress | None = None,
-                        cancel: threading.Event | None = None) -> dict:
-    """Register an FG-MPN store folder from this computer. It is verified (every segment's size and SHA-256 against the store's
-    own manifest) before it is accepted. By default it is used where it is; `copy` puts a copy in Studio's folder."""
+                        cancel: threading.Event | None = None, verify: str = "full", rid: str | None = None, extra: dict | None = None,
+                        version: str | None = None) -> dict:
+    """Register an FG-MPN store folder from this computer. `verify="full"` (the default) checks every segment's size and SHA-256 against
+    the store's own manifest before it is accepted; `verify="size"` checks the manifest and every file's size only, which is what a store of
+    tens of gigabytes needs on install (the full check is `verify_installed`, on request). By default the store is used where it is,
+    recorded by its path and the SHA-256 of its manifest; `copy` puts a copy in Studio's folder."""
+    if verify not in ("full", "size"):
+        raise InstallError("verify must be full or size.", 400, "invalid")
     from ..mpnnet import fgmpn_local
     src = Path(path).expanduser().resolve()
     try:
@@ -483,18 +500,32 @@ def install_local_fgmpn(path: str | Path, name: str | None = None, copy: bool = 
         raise InstallError(str(e), 422, "invalid")
     if not info["ok"]:
         raise InstallError("The store is missing parts: " + "; ".join((info["missing"] + info["wrong_size"])[:3]) + ".", 422, "missing_component")
-    v = fgmpn_local.verify_store(src, progress)
-    if not v["ok"]:
-        raise InstallError("The store does not verify: " + "; ".join(v["problems"][:3]) + ". It was not added.", 422, "verify")
-    rid = "local-" + (re.sub(r"[^a-z0-9]+", "-", (name or src.name).lower()).strip("-")[:40] or "network")
-    version = time.strftime("%Y%m%d-%H%M%S")
+    if verify == "full":
+        v = fgmpn_local.verify_store(src, progress)
+        if not v["ok"]:
+            raise InstallError("The store does not verify: " + "; ".join(v["problems"][:3]) + ". It was not added.", 422, "verify")
+    import hashlib
+    msha = hashlib.sha256((src / "manifests" / info["manifest"]).read_bytes()).hexdigest()
+    rid = rid or "local-" + (re.sub(r"[^a-z0-9]+", "-", (name or src.name).lower()).strip("-")[:40] or "network")
+    version = version or time.strftime("%Y%m%d-%H%M%S")
     final = release_dir("mpn", rid, version)
+    if final.exists():                                        # the same release registered again: replace its record, if that only names a path
+        try:
+            old = json.loads((final / "INSTALL.json").read_text())
+        except (OSError, ValueError):
+            old = {}
+        if not old.get("store_path"):
+            raise InstallError(f"{rid} {version} is already installed here (with its own copy of the store).", 409, "exists")
+        shutil.rmtree(final)
     stage = final.with_name(final.name + ".partial")
     stage.mkdir(parents=True, exist_ok=True)
     rec = {"kind": "mpn", "id": rid, "name": name or src.name, "version": version, "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "studio": __version__, "format": "fgmpn", "origin": "local", "read_only": True, "nodes": info["nodes"], "bytes": info["bytes"],
-           "licence": {"spdx": None, "notes": "Not stated: a folder imported from this computer."}, "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-           "store": {"nodes": info["nodes"], "segments": info["segments"], "generation": info["generation"], "manifest": info["manifest"]}, "warnings": []}
+           "licence": {"spdx": None, "notes": "Not stated: a folder imported from this computer."},
+           "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) if verify == "full" else None, "verified": verify,
+           "store": {"nodes": info["nodes"], "segments": info["segments"], "generation": info["generation"], "manifest": info["manifest"], "manifest_sha256": msha},
+           "warnings": [] if verify == "full" else ["Registered after a size check of every file against the store's manifest; the full SHA-256 check was not run (Verify does it)."]}
+    rec.update(extra or {})
     if copy:
         free = free_bytes(releases_dir() if releases_dir().exists() else paths.data_dir())
         if free < info["bytes"] + MARGIN:

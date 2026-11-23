@@ -251,25 +251,34 @@ def test_website_pairing_made_of_components_installs_all_three(host, studio_home
     assert not seen(host, "segments/")
 
 
-def test_pairing_that_pins_a_network_without_a_studio_payload_says_so_and_installs_nothing(host, studio_home):
+def test_pairing_that_pins_an_fgmpn_only_network_installs_its_store_and_answers_from_it_in_place(host, studio_home):
     fg_only = relhost.mpn_release(host, rid="fg-only")
     core = relhost.core_release(host)
     model = relhost.model_release(host, fg_only, core)
     r = mf.parse_bytes(json.dumps(model).encode())
-    with pytest.raises(install.InstallError) as e:
-        install.install_model(r)
-    assert e.value.code == "no_studio_payload" and "no Studio payload" in str(e.value) and "carries only fgmpn" in str(e.value)
-    assert install.installed() == [] and not seen(host, "segments/")
-    # the Releases view says it before anything is downloaded
-    for m in (fg_only, core):
-        f = Path(studio_home) / f"{m['id']}.json"
-        f.write_bytes(json.dumps(m).encode())
+    m = install.install_model(r)
+    assert m["network"] == {"release": {"id": "fg-only", "version": "1.0.0", "format": "fgmpn"}}
+    assert m["status"]["state"] == "needs build" and not m["status"]["problems"]            # an FG-MPN network is read natively: nothing to convert
+    kinds = {(x["kind"], x.get("format")) for x in install.installed()}
+    assert ("mpn", "fgmpn") in kinds and ("mpn", "studio-store") not in kinds and seen(host, "segments/")
+    for x in (fg_only, core):                                                                   # the Releases view does not block it
+        f = Path(studio_home) / f"{x['id']}.json"
+        f.write_bytes(json.dumps(x).encode())
         source.import_file(f)
     from mpnstudio.api import catalogue_routes
-    rel = {(x["kind"], x["id"], x["version"]): x for x in source.load()["releases"]}
-    index = {(x["kind"], x["id"], x["version"]): x for x in rel.values()}
+    index = {(x["kind"], x["id"], x["version"]): x for x in source.load()["releases"]}
     v = catalogue_routes.view(mf.parse_bytes(json.dumps(model).encode()), index)
-    assert "no Studio payload" in v["model"]["blocked"]
+    assert not (v.get("model") or {}).get("blocked")
+
+
+def test_a_network_release_with_no_payload_a_pairing_can_answer_from_says_so():
+    r = {"name": "Nothing", "version": "1.0.0", "payloads": [{"format": "other", "ok": False, "reason": "unknown format"}]}
+    assert install.pairing_payload(r) is None
+    why = install.studio_payload_problem(r)
+    assert "no payload a pairing can answer from" in why and "unknown format" in why
+    ok = {"name": "Both", "version": "1", "payloads": [{"format": "fgmpn", "ok": True}, {"format": "studio-store", "ok": True}]}
+    assert install.pairing_payload(ok) == "studio-store" and install.studio_payload_problem(ok) is None             # N10K keeps its Studio payload
+    assert install.pairing_payload({"payloads": [{"format": "fgmpn", "ok": True}]}) == "fgmpn"
 
 
 def test_pairing_with_my_own_server_still_installs_the_encoder(host, studio_home):
