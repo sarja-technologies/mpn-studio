@@ -149,7 +149,7 @@ class Engine:
         self.core_key = core_key or (os.environ.get("MPN_CORE_API_KEY") if self.core_endpoint else None)
         # a model built by MPN Studio names itself; the Yaob release manifest has no identity and keeps its prompts verbatim
         self.identity: str | None = man.get("identity")
-        self.model_id: str = man.get("model_id") or "yaob-c4b-n10k"
+        self.model_id: str = man.get("model_id") or "yaob-n10k-c4b"
         self.model_name: str = man.get("name") or self.model_id
         self.device_pref = device
         self.threads = threads

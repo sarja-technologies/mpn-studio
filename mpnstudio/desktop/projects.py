@@ -29,7 +29,7 @@ import uuid
 import zlib
 from pathlib import Path
 
-from .. import ARCHITECTURE_NAME, LEGACY_ARCHITECTURE_NAME
+from .. import ARCHITECTURE_NAME, LEGACY_ARCHITECTURE_NAME, names
 from ..store.schema import SCHEMA_VERSION
 from . import paths
 
@@ -178,7 +178,7 @@ def project_summary(slug: str, m: dict) -> dict:
     """What the home screen shows for one project. Read straight from the files; never opens a network."""
     d = project_dir(slug)
     kind = kind_of(m)
-    base = {"id": slug, "uid": m.get("id"), "name": m.get("name", slug), "description": m.get("description", ""), "kind": kind,
+    base = {"id": slug, "uid": m.get("id"), "name": names.network_display_name(m.get("name", slug)), "description": m.get("description", ""), "kind": kind,
             "created": m.get("created"), "modified": m.get("modified"), "origin": m.get("origin"),
             "core": (m.get("references") or {}).get("core")}
     if kind == "network":

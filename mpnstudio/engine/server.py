@@ -4,7 +4,7 @@ conversations, nodes, procedures).
 Binds 127.0.0.1 by default. Listening on any other address requires an API key (--api-key, MPN_API_KEY or
 YAOB_API_KEY); every endpoint except /health then needs `Authorization: Bearer <key>`.
 
-Models served on /v1/models, where <id> is the model's id from its manifest (yaob-c4b-n10k for the Yaob release):
+Models served on /v1/models, where <id> is the model's id from its manifest (yaob-n10k-c4b for the Yaob release):
   <id>            core + MPN (routing, node evidence, procedures, MPN tools)   default
   <id>-core       the core alone (no node is read)
   <id>-retrieval  core + ordinary retrieval (baseline)
@@ -34,7 +34,7 @@ from .. import __version__
 from .convstore import ConvStore
 from .engine import Engine
 
-MODEL = "yaob-c4b-n10k"       # the Yaob release; a model built in MPN Studio carries its own id
+MODEL = "yaob-n10k-c4b"       # the Yaob N10K-C4B release; a model built in MPN Studio carries its own id
 
 
 def modes_for(model_id: str) -> dict[str, str]:
@@ -42,6 +42,8 @@ def modes_for(model_id: str) -> dict[str, str]:
 
 
 MODES = modes_for(MODEL)
+for _legacy in ('yaob-c4b-n10k', 'yaob-next-c4b-n10k'):   # ids that once named this model: still accepted in requests, never listed
+    MODES.update(modes_for(_legacy))
 MAX_BODY = 64 << 20         # images arrive base64-encoded in the request body
 
 

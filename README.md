@@ -20,7 +20,7 @@
   <a href="https://yaob.fylu.me">Yaob</a>
 </p>
 
-![MPN Studio showing the Yaob Next model: its core, node network and encoder, the build report, and a test answer with the evidence it used](docs/desktop/acceptance/20-model-test-chat.png)
+![MPN Studio showing the Yaob N10K-C4B model: its core, node network and encoder, the build report, and a test answer with the evidence it used](docs/desktop/acceptance/20-model-test-chat.png)
 
 MPN Studio is the model builder for **Modular Persistent Networks** (MPN), made by [Fylume](https://fylu.me).
 A model is a **cognitive core**, an open-weight language model in GGUF form used unchanged, joined to a **node
@@ -33,23 +33,23 @@ Get the files from the [Releases page](https://github.com/sarja-technologies/mpn
 
 | File | For |
 |---|---|
-| `mpn-studio_0.6.0_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
-| `MPN-Studio_0.6.0_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
+| `mpn-studio_0.6.1_amd64.deb` | Ubuntu and Debian on x86-64 (Intel, AMD) |
+| `MPN-Studio_0.6.1_x86_64.AppImage` | Other x86-64 Linux with GTK 3 and WebKitGTK 4.1; no install, no root |
 | `SHA256SUMS-x86_64` | Checksums for the x86-64 files |
-| `mpn-studio_0.6.0_arm64.deb` | Ubuntu and Debian on ARM64 (NVIDIA DGX Spark and other ARMv8.2+ machines) |
-| `MPN-Studio_0.6.0_aarch64.AppImage` | Other ARM64 Linux with GTK 3 and WebKitGTK 4.1 |
+| `mpn-studio_0.6.1_arm64.deb` | Ubuntu and Debian on ARM64 (NVIDIA DGX Spark and other ARMv8.2+ machines) |
+| `MPN-Studio_0.6.1_aarch64.AppImage` | Other ARM64 Linux with GTK 3 and WebKitGTK 4.1 |
 | `SHA256SUMS-aarch64` | Checksums for the ARM64 files |
 
 ```sh
 sha256sum -c SHA256SUMS-x86_64 --ignore-missing        # or SHA256SUMS-aarch64
-sudo apt install ./mpn-studio_0.6.0_amd64.deb          # menu entry "MPN Studio"; commands mpn-studio and mpn (arm64 on ARM64)
+sudo apt install ./mpn-studio_0.6.1_amd64.deb          # menu entry "MPN Studio"; commands mpn-studio and mpn (arm64 on ARM64)
 # or
-chmod +x MPN-Studio_0.6.0_x86_64.AppImage && ./MPN-Studio_0.6.0_x86_64.AppImage
+chmod +x MPN-Studio_0.6.1_x86_64.AppImage && ./MPN-Studio_0.6.1_x86_64.AppImage
 ```
 
-0.6 answers from FG-MPN networks: a pairing can use the 119.7 million record Yaob Origin N119M (or any FG-MPN store) with any cognitive core,
+0.6 answers from FG-MPN networks: a pairing can use the 119.7 million record Yaob N119M-C4B (or any FG-MPN store) with any cognitive core,
 reading the store where it is, with no copy and no embeddings ([docs/fgmpn-answering.md](docs/fgmpn-answering.md)). `mpn package import` takes a Yaob package
-(a folder or a zip) and makes its pairing. Yaob Origin N119M stores 280,844,705 edge rows (18,742,569 attached to nodes and 262,102,136 in-edges whose source
+(a folder or a zip) and makes its pairing. Yaob N119M-C4B stores 280,844,705 edge rows (18,742,569 attached to nodes and 262,102,136 in-edges whose source
 is not a stored node); an earlier statement of 1,693,590,449 relationships was wrong.
 
 0.5 opens 0.4 projects as they are. It adds cognitive cores on any OpenAI-compatible server, pairings whose core can be changed without
@@ -60,9 +60,9 @@ the box: the app carries the public [FG-MPN runtime](https://github.com/sarja-te
 The packages include llama.cpp builds for CPU, CUDA (NVIDIA) and, on x86-64, Vulkan, and use the first that finds a
 usable device. The NVIDIA or Vulkan driver must already be installed; without a GPU, models run on the CPU.
 
-Tested for 0.6.0: the headless backends of the x86-64 and ARM64 .deb packages against the live catalogue and the public Hugging Face packages, Yaob Origin N119M
+Tested for 0.6.0: the headless backends of the x86-64 and ARM64 .deb packages against the live catalogue and the public Hugging Face packages, Yaob N119M-C4B
 answered, re-bound and imported as a package on ARM64 (also on its CUDA runtime), and the ARM64 AppImage started in a virtual display; the full window script was not run for this release. See
-[docs/desktop/ACCEPTANCE.md](docs/desktop/ACCEPTANCE.md) for what was and was not run. x86-64 CUDA and Vulkan inference, other distributions and AMD and Intel GPUs are untested. There is no Windows or macOS build.
+[docs/desktop/ACCEPTANCE.md](docs/desktop/ACCEPTANCE.md) for what was and was not run. x86-64 CUDA and Vulkan inference, other distributions and AMD and Intel GPUs are untested. There is no Windows or macOS build. 0.6.1 changes names only (the official Yaob N10K-C4B and Yaob N119M-C4B; older ids and stored names still open); what was re-run for it is in the [release notes](https://github.com/sarja-technologies/mpn-studio/releases/tag/v0.6.1).
 
 ## Projects
 
@@ -76,12 +76,12 @@ from. Nobody has to know what is inside the folder.
 - **Save** is automatic: every edit is written to disk as you make it, and the top bar says so. **Undo** and **Redo**
   work across the whole history. **Versions** names the current state, compares any two states, and opens an old version
   as a new project. **Export** writes an `.mpn` model, a bundle folder, a backup, or (for a fork) an `.mpnfork` file.
-- **Large networks are never copied.** A network such as Yaob Origin N119M (119 million nodes, 129 GiB) opens as a
+- **Large networks are never copied.** A network such as Yaob N119M-C4B (119 million nodes, 129 GiB) opens as a
   protected original: read only, searched and browsed a page at a time. **Duplicate to edit** makes a fork in a fraction
   of a second that stores only your changes (a few hundred kilobytes); the original is never written to.
 
 ![The home screen](docs/desktop/acceptance/0.4/home.png)
-![Yaob Origin N119M opened from the server that holds it, as a protected original](docs/desktop/acceptance/0.4/origin.png)
+![Yaob N119M-C4B opened from the server that holds it, as a protected original](docs/desktop/acceptance/0.4/origin.png)
 ![A fork of Yaob Origin with Douglas Adams edited; the original is unchanged](docs/desktop/acceptance/0.4/fork-edit.png)
 
 How projects, links and forks are stored: [docs/desktop/PROJECTS.md](docs/desktop/PROJECTS.md).
@@ -122,7 +122,7 @@ provenance with source, licence and attribution, claims, relationships in both d
 clickable neighbourhood graph. A linked network can have several sources (a local folder and a server address); MPN
 Studio checks that each one holds the same network and falls back to the next if one is unreachable.
 
-Measured on 14 November 2026 with Yaob Origin N119M (119,176,878 nodes): linking it took 0.09 s and its project folder is
+Measured on 14 November 2026 with Yaob N119M-C4B (119,176,878 nodes): linking it took 0.09 s and its project folder is
 1.1 KiB; a fork took 0.03 s and 121 KiB after an edit; a search 0.03 to 0.6 s, a node 0.02 s; the backend used under
 500 MiB. With the network unreachable, a project linked to both a server and a local copy kept working from the local
 copy. The Yaob Origin network itself is not part of this release.

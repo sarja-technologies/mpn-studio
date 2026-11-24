@@ -451,7 +451,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         if out.exists():
             raise ops.OpError(f"{out} already exists.", 409)
         card = jobs.data_root() / "MODEL_CARD.md"
-        man = bundle.export_bundle(store, out, body.get("model_name") or "yaob-n10k", bundle.active_checkpoint_dir(store),
+        man = bundle.export_bundle(store, out, body.get("model_name") or "yaob-n10k-c4b", bundle.active_checkpoint_dir(store),
                                    store.get_setting("core_reference") or {}, card.read_text() if card.exists() else None)
         return {"path": str(out), "revision": man["revision"], "counts": man["counts"], "files": len(man["files"]), "checkpoint": man["checkpoint"]}
 
@@ -689,7 +689,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @app.get("/v1/models")
     async def v1_models():
         rel = store.get_setting("active_release") or {}
-        return {"object": "list", "data": [{"id": "yaob-n10k", "object": "model", "owned_by": "fylume", "created": 0,
+        return {"object": "list", "data": [{"id": "yaob-n10k-c4b", "object": "model", "owned_by": "fylume", "created": 0,
                                             "yaob": {"revision": store.head(), "release": rel}}]}
 
     @app.post("/v1/chat/completions")

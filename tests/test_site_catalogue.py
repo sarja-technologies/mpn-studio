@@ -59,12 +59,14 @@ def test_the_live_response_with_the_public_packages(host):
     r = source.refresh()
     assert r["releases"] == 7 and r["skipped"] == []
     by = {(x["kind"], x["id"]): x for x in source.load()["releases"]}
-    for rid in ("yaob-n10k", "yaob-next-n10k"):
+    for rid in ("yaob-next-n10k",):
         n = by[("mpn", rid)]
         assert not n.get("download_only") and n["compat"]["ok"] and n["problems"] == []
         fmts = {f.get("format") for f in n["files"]}
         assert {"fgmpn", "studio-store"} <= fmts, fmts
         assert {p["format"]: p["ok"] for p in n["payloads"]} == {"fgmpn": True, "studio-store": True}, n["payloads"]
+    # the retired original (yaob-n10k 0.1.0) is archived in 0.6.1: listed, labelled, download only, never installed by Studio
+    assert by[("mpn", "yaob-n10k")]["download_only"] and by[("mpn", "yaob-n10k")]["name"] == "Yaob N10K (retired)"
     for cid in ("qwen3-5-4b-q8-0-gguf", "qwen3-embedding-0-6b-f16-gguf"):
         assert by[("core", cid)]["compat"]["ok"]
     assert not by[("core", "yaob-n10k-specialists-0-1-0")]["compat"]["ok"]            # adapters need their base model

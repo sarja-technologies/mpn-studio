@@ -187,7 +187,7 @@ def cmd_network(a):
         from .catalogue import install
         _out(install.install_local_fgmpn(ar[0], ar[1] if len(ar) > 1 else None, a.copy, lambda l, d, t: sys.stderr.write(f"\r{l[:50]:<50} {100 * d / max(t, 1):5.1f} %"), None, a.verify))
     elif a.action == "import-yaob":
-        _out(networks.import_yaob_release(ar[0], ar[1] if len(ar) > 1 else "Yaob N10K"))
+        _out(networks.import_yaob_release(ar[0], ar[1] if len(ar) > 1 else "Yaob N10K-C4B"))
     elif a.action == "import-store":
         _out(networks.import_store(ar[0], ar[1]))
     elif a.action == "duplicate":

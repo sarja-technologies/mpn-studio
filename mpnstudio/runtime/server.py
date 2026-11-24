@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from ..names import product_id
 from ..store.db import Store
 from ..train import jobs
 from ..train.gpulock import GpuLock
@@ -24,10 +25,10 @@ from .engine import Engine
 log = logging.getLogger("mpnstudio.runtime")
 
 
-V1_MODELS = {"yaob-n10k": "Yaob N10K: learned routing over 10,000 nodes, node text and procedures, on Qwen3-4B-Instruct-2507 "
-                          "(specialist adapters off by default; budget max_active_adapters)",
-             "yaob-n10k-retrieval": "Yaob N10K nodes through ordinary retrieval (no learned routing or adapters), same core"}
-V1_MODE = {"yaob-n10k": "yaob", "yaob-n10k-retrieval": "retrieval"}
+# The one active model id. Retrieval is a mode of it: a request that names `<id>-retrieval` (an old or new spelling) asks for ordinary retrieval.
+V1_MODELS = {"yaob-n10k-c4b": "Yaob N10K-C4B: learned routing over 10,000 nodes, node text and procedures, on Qwen3.5-4B "
+                              "(specialist adapters off by default; budget max_active_adapters)"}
+RETRIEVAL_SUFFIX = "-retrieval"
 
 
 def text_of(content) -> str:
@@ -209,9 +210,9 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/models")
     async def v1_models():
-        """The ways to ask the model, as OpenAI-style model ids. `yaob-n10k` is the full path (learned routing,
-        node text, procedures, and specialist adapters up to the budget's max_active_adapters, 0 by default); `yaob-n10k-retrieval` is ordinary retrieval over the same
-        nodes with the same core, for comparison."""
+        """The models this runtime serves, as OpenAI-style model ids. `yaob-n10k-c4b` is the full path (learned routing,
+        node text, procedures, and specialist adapters up to the budget's max_active_adapters, 0 by default). Asking the same id
+        with `-retrieval` appended is ordinary retrieval over the same nodes with the same core, for comparison; it is not listed."""
         st = engine.status()
         core = st.get("core") or {}
         ck = st.get("checkpoint")
@@ -227,7 +228,11 @@ def create_app() -> FastAPI:
     @app.post("/v1/chat/completions")
     async def chat(body: dict):
         y = body.get("yaob") or {}
-        mode = y.get("mode") or V1_MODE.get(str(body.get("model") or ""), "yaob")
+        requested = product_id(body.get("model"))            # ids that once named this product still resolve
+        retrieval = bool(requested) and requested.endswith(RETRIEVAL_SUFFIX)
+        if retrieval:
+            requested = requested[: -len(RETRIEVAL_SUFFIX)]
+        mode = y.get("mode") or ("retrieval" if retrieval else "yaob")
         body["messages"] = [dict(m, content=text_of(m.get("content"))) for m in body.get("messages", []) if m.get("role") in ("system", "user", "assistant")]
         budget = dict(body.get("budget") or {})
         # max_tokens is the client's upper bound on generated tokens. It is honoured up to the runtime's answer cap
@@ -237,7 +242,7 @@ def create_app() -> FastAPI:
             budget["requested_output_tokens"] = want
         cid = "chatcmpl-" + os.urandom(6).hex()
         created = int(time.time())
-        model_id = body.get("model") if body.get("model") in V1_MODELS else "yaob-n10k"
+        model_id = requested if requested in V1_MODELS else "yaob-n10k-c4b"
         base = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model_id}
         agen = stream(body.get("messages", []), mode, y.get("rev"), None, budget, y.get("options"))
         if body.get("stream"):

@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from .. import names
 from ..mpnnet import schema as S
 from ..mpnnet.service import Local, NetError, Remote
 from .overlay import Overlay, OverlayError, new_node_id
@@ -27,10 +28,10 @@ HEX = re.compile(r"^[0-9a-f]{32}$")
 
 # Networks with an official name. The pack and store identifiers are the ones written by the network's builder.
 KNOWN = {
-    "yaob-origin-n119m": {
-        "name": "Yaob Origin N119M",
+    "yaob-n119m-c4b": {
+        "name": "Yaob N119M network",
         "pack_ids": ["fylume-mpn", "mpn14b-live"],
-        "description": "The 119-million-node Yaob Origin knowledge network: Wikidata, Wikidata lexemes and OpenAlex "
+        "description": "The 119-million-node knowledge network of Yaob N119M-C4B: Wikidata, Wikidata lexemes and OpenAlex "
                        "records with their relationships, built by Fylume.",
     },
 }
@@ -226,12 +227,12 @@ class Workspace:
     # ------------------------------------------------------------------ merged reads
     def overview(self) -> dict:
         ov = dict(self._base("overview"))
-        known = self.net.get("identity", {}).get("known")
+        known = names.product_id(self.net.get("identity", {}).get("known"))     # a project linked before 0.6.1 stores the old key
         if known in KNOWN:
             ov["name"] = KNOWN[known]["name"]
             ov["description"] = KNOWN[known]["description"]
         else:
-            ov["name"] = self.m.get("name") or ov.get("name")
+            ov["name"] = names.network_display_name(self.m.get("name")) or ov.get("name")
         if self.overlay:
             st = self.overlay.stats()
             ov["changes"] = st

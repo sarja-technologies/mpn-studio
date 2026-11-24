@@ -19,6 +19,7 @@ view shows it with its download link. `apps[]` are not Studio's business and are
 from __future__ import annotations
 
 from .. import __version__
+from .. import names as pnames
 from . import manifest as mf
 
 KIND_KEYS = {"mpns": "mpn", "cores": "core", "models": "model"}
@@ -104,6 +105,8 @@ def release_of(kind: str, e: dict) -> dict:
                       **_pins(block, comps)}
     elif kind == "core":
         pass
+    if pnames.is_retired(e.get("id")):       # the retired original (Yaob N10K 0.1.0) stays archived: a download, never an active install
+        download_only = _download_only(e, "Download only, not installable by Studio: the original Yaob N10K (0.1.0) is retired and archived.")
     if download_only:
         strict = False
         reasons.append(download_only["reason"])
@@ -130,11 +133,21 @@ def release_of(kind: str, e: dict) -> dict:
     totals = {"download_bytes": sum(f["bytes"] for f in files) if files else (_int(e.get("size_bytes")) or 0), "file_count": len(files),
               "installed_bytes": None}
     links = e.get("links") if isinstance(e.get("links"), dict) else {}
-    return {"id": rid, "kind": kind, "name": e.get("name") or rid, "version": version, "released_at": e.get("released_at"),
+    return {"id": rid, "kind": kind, "name": _catalogue_name(e, rid, kind), "version": version, "released_at": e.get("released_at"),
             "licence": {"spdx": None, "notes": lic_text or None, "label": label or None}, "hosting": {"primary": {"type": "urls"}, "mirrors": []},
             "files": files, "totals": totals, "detail": detail, "problems": problems,
             "compat": {"ok": not reasons and not problems, "reasons": reasons}, "payloads": pl, "manifest_sha256": None,
             "download_only": download_only, "summary": e.get("summary"), "status": e.get("status"), "links": links, "shape": "site", "raw": e}
+
+
+def _catalogue_name(e: dict, rid: str, kind: str = "") -> str:
+    """The official spelling of the entry's name. A network is a component ("Yaob N10K network"), never a product name;
+    the retired original is labelled as retired."""
+    comp = pnames.component_id(rid) if kind == "mpn" else None
+    if comp in pnames.COMPONENT_NAMES:
+        return pnames.COMPONENT_NAMES[comp]
+    name = pnames.display_name(e.get("name")) or rid
+    return name + " (retired)" if pnames.is_retired(rid) else name
 
 
 def _match_file(name, names: set[str]):

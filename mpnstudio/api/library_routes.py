@@ -178,7 +178,7 @@ def register(app: FastAPI, get_store: Callable, open_project: Callable[[str], No
     def net_import(body: dict):
         kind, p = body.get("kind"), _abs(body.get("path"))
         if kind == "yaob":
-            return networks.import_yaob_release(p, body.get("name") or "Yaob N10K")
+            return networks.import_yaob_release(p, body.get("name") or "Yaob N10K-C4B")
         if kind == "store":
             return networks.import_store(p, body.get("name") or Path(p).stem)
         if kind == "bundle":
@@ -186,7 +186,7 @@ def register(app: FastAPI, get_store: Callable, open_project: Callable[[str], No
         if kind == "auto":
             pp = Path(p)
             if pp.is_dir() and (pp / "network" / "yaob-n10k.sqlite").exists():
-                return networks.import_yaob_release(p, body.get("name") or "Yaob N10K")
+                return networks.import_yaob_release(p, body.get("name") or "Yaob N10K-C4B")
             if pp.is_dir():
                 return networks.info(dprojects.import_bundle_dir(p, body.get("name")))
             return networks.import_store(p, body.get("name") or pp.stem)

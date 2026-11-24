@@ -211,7 +211,7 @@ def register(app: FastAPI, ctx: dict, get_store: Callable, open_project: Callabl
         elif path.is_dir() and ((path / "parts" / "p00.sqlite").exists() or (path / "p00.sqlite").exists()):
             return projects_link({"name": name, "sources": [{"mode": "local", "target": str(path)}], "open": body.get("open", True)})
         elif path.is_dir() and (path / "network" / "yaob-n10k.sqlite").exists():
-            slug = networks.import_yaob_release(path, name or "Yaob N10K")["id"]
+            slug = networks.import_yaob_release(path, name or "Yaob N10K-C4B")["id"]
         elif path.is_dir():
             slug = P.import_bundle_dir(path, name)
         elif path.suffix in (".sqlite", ".db"):

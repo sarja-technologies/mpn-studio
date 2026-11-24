@@ -16,6 +16,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .. import names
 from ..desktop import projects
 from ..desktop.projects import ProjectError
 from ..store import netops
@@ -38,7 +39,7 @@ def router(slug: str) -> dict | None:
 def info(slug: str) -> dict:
     m = _manifest(slug)
     s = projects.summarize(projects.store_path(slug))
-    return {"id": slug, "name": m.get("name", slug), "description": m.get("description", ""), "tags": m.get("tags", []),
+    return {"id": slug, "name": names.network_display_name(m.get("name", slug)), "description": m.get("description", ""), "tags": m.get("tags", []),
             "created": m.get("created"), "modified": m.get("modified"), "origin": m.get("origin"), "router": router(slug), **s}
 
 
@@ -142,7 +143,7 @@ def set_router_encoder(slug: str, encoder: dict) -> bool:
     return True
 
 
-def import_yaob_release(folder: str | Path, name: str = "Yaob N10K") -> dict:
+def import_yaob_release(folder: str | Path, name: str = "Yaob N10K-C4B") -> dict:
     """A Yaob release folder (network/yaob-n10k.sqlite + network/checkpoint + models/encoder/encoder.gguf)."""
     f = Path(folder)
     db, ck, enc = f / "network" / "yaob-n10k.sqlite", f / "network" / "checkpoint", f / "models" / "encoder" / "encoder.gguf"

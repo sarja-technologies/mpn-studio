@@ -254,7 +254,7 @@ def main(argv=None):
     if argv and argv[0] == "serve":
         from .server import main as serve_main
         return serve_main(argv[1:])
-    ap = argparse.ArgumentParser(prog="yaob", description="Yaob C4B-N10K command line")
+    ap = argparse.ArgumentParser(prog="yaob", description="Yaob N10K-C4B command line")
     ap.add_argument("--url", default=os.environ.get("YAOB_URL", "http://127.0.0.1:" + os.environ.get("YAOB_PORT", "8842")))
     ap.add_argument("--api-key", default=os.environ.get("YAOB_API_KEY"))
     ap.add_argument("--device", default=os.environ.get("YAOB_DEVICE", "auto"))

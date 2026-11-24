@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1 (2026-11-24)
+
+Official Yaob names.
+
+- **Yaob N10K-C4B and Yaob N119M-C4B.** The two official products are named as in the release contract: the 10,000-node network with the
+  4-billion-parameter core, and the 119-million-record network with the same core. Every displayed name, the default name of an imported
+  release, the advertised model ids and the Releases view use these names. Components are named "Yaob N10K network" and "Yaob N119M network".
+- **Old names still open.** A project, pairing, model or installed release that stored an earlier id (`yaob-origin-n119m`, `yaob-c4b-n10k`,
+  `yaob-next-*`, `yaob-mpn14b`) resolves to its product, and a request that names an old model id is answered. Stored names are not rewritten;
+  the names shown are mapped when they are read. Nothing is written to a pack or to a network store.
+- **Pairings keep installing.** A pairing installed before 0.6.1 still matches its catalogue release when the catalogue uses the new ids.
+- **The retired original.** Yaob N10K (`yaob-n10k`, 0.1.0) is no longer offered in the catalogue. Projects that were made from it still open.
+- **Package configuration.** A package manifest may say `N10K-C4B` or the earlier `C4B-N10K`; both register the same product.
+
 ## 0.6.0 (2026-11-23)
 
 Pairings answer from native FG-MPN networks.

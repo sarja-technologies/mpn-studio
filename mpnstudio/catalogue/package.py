@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from .. import __version__
+from .. import names
 from ..desktop import paths
 from .manifest import FGMPN_VERSIONS, STUDIO_CHECKPOINT, STUDIO_NETWORK, version_tuple
 
@@ -237,7 +238,7 @@ def inspect(path: str | Path) -> dict:
     m = read_manifest(root)
     c = check(root, m, "size")
     mpn = m["mpn"]
-    return {"path": str(root), "family": m["family"], "configuration": m["configuration"], "version": m["version"], "core": {k: m["core"].get(k) for k in ("id", "version", "file", "bytes", "parameters", "quant")},
+    return {"path": str(root), "family": m["family"], "configuration": names.configuration(m["configuration"]), "version": m["version"], "core": {k: m["core"].get(k) for k in ("id", "version", "file", "bytes", "parameters", "quant")},
             "encoder": ({k: m["encoder"].get(k) for k in ("id", "version", "file", "bytes")} if m.get("encoder") else None),
             "mpn": {k: mpn.get(k) for k in ("id", "version", "format", "path", "nodes")}, "runtime": m.get("runtime"), "files": c["files"], "bytes": c["bytes"], "ok": c["ok"], "problems": c["problems"]}
 
@@ -273,13 +274,13 @@ def import_package(path: str | Path, progress: Progress | None = None, cancel: t
     if not rep["ok"]:
         raise PackageError("The package does not verify: " + "; ".join(rep["problems"][:4]) + (f" (and {len(rep['problems']) - 4} more)" if len(rep["problems"]) > 4 else "") + ". Nothing was registered.",
                            422, "verify")
-    mpn, cfg = m["mpn"], m["configuration"]
+    mpn, cfg = m["mpn"], names.configuration(m["configuration"])
     existing = next((x for x in models.list_models() if ((x.get("release") or {}).get("package") or {}).get("path") == str(root)
                      and x["release"]["package"].get("version") == m["version"]), None)
     out: dict = {"path": str(root), "family": m["family"], "configuration": cfg, "version": m["version"], "verified": verify, "extracted": bool(extracted), "registered": []}
     # ---- cores, registered where they are
     def reg_core(part: dict, kind: str) -> dict:
-        c = cores.import_gguf(root / part["file"], mode="reference", name=f"{m['family']} {part.get('id') or kind} {part.get('quant') or ''}".strip(), known_sha256=part["sha256"])
+        c = cores.import_gguf(root / part["file"], mode="reference", name=f"{names.family_name(m['family'])} {part.get('id') or kind} {part.get('quant') or ''}".strip(), known_sha256=part["sha256"])
         if c["kind"] != kind:
             raise PackageError(f"{part['file']} is a {c['kind']}, not a {'cognitive core' if kind == 'core' else 'retrieval encoder'}.", 422, "invalid")
         out["registered"].append({"kind": kind, "id": c["id"], "path": str(root / part["file"]), "in_place": True})
@@ -287,7 +288,7 @@ def import_package(path: str | Path, progress: Progress | None = None, cancel: t
     core = reg_core(m["core"], "core")
     enc = reg_core(m["encoder"], "encoder") if m.get("encoder") else None
     # ---- the network
-    name = f"{m['family']} {cfg} {m['version']}"
+    name = f"{names.family_name(m['family'])} {cfg} {m['version']}"
     net_slug, fg_rec = None, None
     store = _store_root(root, m)
     sq = root / mpn["path"] / STUDIO_NETWORK
@@ -296,15 +297,15 @@ def import_package(path: str | Path, progress: Progress | None = None, cancel: t
             raise PackageError(f"The package says its network is a Studio store but {mpn['path']}/{STUDIO_NETWORK} is missing.", 422, "invalid")
         ck = root / mpn["path"] / STUDIO_CHECKPOINT.rstrip("/")
         try:
-            net_slug = networks.import_studio_payload(sq, ck if ck.is_dir() else None, f"{m['family']} {mpn.get('id') or cfg}", f"package {m['family']} {cfg} {m['version']}",
+            net_slug = networks.import_studio_payload(sq, ck if ck.is_dir() else None, names.component_name(mpn.get("id") or cfg, m["family"]), f"package {m['family']} {cfg} {m['version']}",
                                                       {"name": enc["name"], "sha256": enc["sha256"]} if enc else None)
         except Exception as e:
             raise PackageError(f"The Studio network of the package could not be imported: {e}", 422, "incompatible")
         out["registered"].append({"kind": "network", "format": "studio-store", "project": net_slug})
     if store is not None:
-        fg_rec = install.install_local_fgmpn(store, f"{mpn.get('id') or cfg}", False, progress, cancel, "size", rid=_slug(mpn.get("id") or f"{m['family']}-{cfg}"), version=str(mpn.get("version") or m["version"]),
+        fg_rec = install.install_local_fgmpn(store, names.component_name(mpn.get("id") or cfg, m["family"]), False, progress, cancel, "size", rid=_slug(names.component_id(mpn.get("id")) or f"{m['family']}-{cfg}"), version=str(mpn.get("version") or m["version"]),
                                              extra={"package": {"family": m["family"], "configuration": cfg, "version": m["version"], "path": str(root)}, "nodes": mpn.get("nodes"),
-                                                    "name": mpn.get("id") or name})
+                                                    "name": names.component_name(mpn.get("id") or cfg, m["family"])})
         out["registered"].append({"kind": "network", "format": "fgmpn", "path": str(store), "in_place": True, "id": fg_rec["id"], "version": fg_rec["version"]})
     elif mpn["format"] == "fgmpn":
         raise PackageError(f"The package says its network is an FG-MPN store but no store (CURRENT and manifests/) is under {mpn['path']}.", 422, "invalid")

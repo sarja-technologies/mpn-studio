@@ -60,15 +60,15 @@ def test_an_fgmpn_package_is_registered_where_it_is_and_gets_its_pairing(studio_
     r = package.import_package(pkg)
     assert r["verified"] == "full" and not r["already"] and not r["extracted"]
     rec = install.get_installed("mpn", "yaob-origin-n119m", "1.0.0", "fgmpn")
-    assert Path(rec["store_path"]) == (pkg / "mpn" / "store").resolve() and rec["verified"] == "size" and rec["store"]["manifest_sha256"] and rec["package"]["configuration"] == "C4B-N119M"
+    assert Path(rec["store_path"]) == (pkg / "mpn" / "store").resolve() and rec["verified"] == "size" and rec["store"]["manifest_sha256"] and rec["package"]["configuration"] == "N119M-C4B"
     core = next(c for c in cores.list_cores() if c["kind"] == "core")
     assert core["path"] == str((pkg / "cognitive-core" / "core-4b-Q8_0.gguf").resolve()) and core["source"]["how"] == "reference"       # in place, not copied
     lib = Path(cores.library_dir())
     assert not list(lib.rglob("model.gguf"))
     assert sum(p.stat().st_size for p in (studio_home / "data").rglob("*") if p.is_file()) < 200_000                                  # no gigabytes anywhere in Studio's folder
     m = r["pairing"]
-    assert m["network"] == {"release": {"id": "yaob-origin-n119m", "version": "1.0.0", "format": "fgmpn"}} and m["core"]["id"] == core["id"] and m["encoder"] is None
-    assert m["model_id"] == "yaob-next-c4b-n119m" and m["release"]["package"]["configuration"] == "C4B-N119M"
+    assert m["network"] == {"release": {"id": "yaob-n119m-mpn", "version": "1.0.0", "format": "fgmpn"}} and m["core"]["id"] == core["id"] and m["encoder"] is None
+    assert m["model_id"] == "yaob-next-n119m-c4b" and m["release"]["package"]["configuration"] == "N119M-C4B"
     assert m["status"]["state"] == "needs build" and not m["status"]["problems"]
     assert tree_state(pkg) == before                                                                     # the package folder was only read
 
@@ -186,7 +186,7 @@ def test_the_api_and_the_cli_import_a_package(studio_home, tmp_path):
     pkg = make_package(tmp_path / "p")
     c = TestClient(create_app())
     ins = c.post("/api/packages/inspect", json={"path": str(pkg)}).json()
-    assert ins["ok"] and ins["configuration"] == "C4B-N119M" and ins["mpn"]["format"] == "fgmpn" and ins["bytes"] > 300_000
+    assert ins["ok"] and ins["configuration"] == "N119M-C4B" and ins["mpn"]["format"] == "fgmpn" and ins["bytes"] > 300_000
     assert c.post("/api/packages/inspect", json={"path": "relative/path"}).status_code == 400
     t = wait(c, c.post("/api/packages/import", json={"path": str(pkg), "verify": "size"}).json())
     assert t["state"] == "done", t

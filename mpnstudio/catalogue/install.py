@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from .. import __version__
+from .. import names
 from ..desktop import paths
 from . import manifest as mf
 from . import source
@@ -63,12 +64,13 @@ def installed(kind: str | None = None) -> list[dict]:
         if kind and rec.get("kind") != kind:
             continue
         rec["path"] = str(f.parent)
+        rec["name"] = names.display_name(rec.get("name"))
         out.append(rec)
     return out
 
 
 def get_installed(kind: str, rid: str, version: str | None = None, fmt: str | None = None) -> dict | None:
-    rows = [r for r in installed(kind) if r["id"] == rid and (version is None or r["version"] == version) and (fmt is None or r.get("format") == fmt)]
+    rows = [r for r in installed(kind) if _same(kind, r["id"], rid) and (version is None or r["version"] == version) and (fmt is None or r.get("format") == fmt)]
     rows.sort(key=lambda r: mf.version_tuple(r["version"]), reverse=True)
     return rows[0] if rows else None
 
@@ -373,6 +375,11 @@ def uninstall(kind: str, rid: str, version: str, fmt: str | None = None) -> dict
 
 
 # ------------------------------------------------------------------------------------------------ prebuilt pairings
+def _same(kind: str, a: str | None, b: str | None) -> bool:
+    """Ids of one kind name the same release: a product (model) or a component (mpn), old spelling or new."""
+    return names.canonical(kind, a) == names.canonical(kind, b)
+
+
 def resolve_pin(kind: str, pin: dict) -> dict:
     """The component a pairing pins. A manifest-form pin carries `manifest_sha256`: the component is found in the catalogue when its
     checksum is the pinned one, otherwise fetched from the pinned repository and revision, and a manifest that is not the pinned bytes
@@ -381,7 +388,7 @@ def resolve_pin(kind: str, pin: dict) -> dict:
     want = str(pin.get("manifest_sha256") or "").lower()
     if not want:
         rels = [r for r in source.load()["releases"] if r["kind"] == kind]
-        hit = next((r for r in rels if pin.get("id") and r["id"] == pin["id"] and r["version"] == pin.get("version")), None)
+        hit = next((r for r in rels if pin.get("id") and _same(kind, r["id"], pin["id"]) and r["version"] == pin.get("version")), None)
         if hit is None and pin.get("repo_url"):           # a component names its repository: match the entry whose links point there
             hit = next((r for r in rels if r["version"] == pin.get("version") and pin["repo_url"] in (r.get("links") or {}).values()), None)
         if hit is None and not pin.get("id") and pin.get("name"):
@@ -390,7 +397,7 @@ def resolve_pin(kind: str, pin: dict) -> dict:
             return hit
         raise InstallError(f"The {kind} {pin.get('id') or pin.get('name')} {pin.get('version')} this pairing is made of is not in the catalogue. Refresh the catalogue.", 404, "missing_component")
     for r in source.load()["releases"]:
-        if r["kind"] == kind and r["id"] == pin["id"] and r["version"] == pin["version"] and r.get("manifest_sha256") == want:
+        if r["kind"] == kind and _same(kind, r["id"], pin["id"]) and r["version"] == pin["version"] and r.get("manifest_sha256") == want:
             return r
     repo, rev = pin.get("repo"), pin.get("revision")
     if not repo or not rev:
@@ -412,7 +419,7 @@ def resolve_pin(kind: str, pin: dict) -> dict:
         r["manifest_sha256"] = want
     except (ValueError, UnicodeDecodeError, mf.ManifestError) as e:
         raise InstallError(str(e), 422, "invalid")
-    if r["kind"] != kind or r["id"] != pin["id"] or r["version"] != pin["version"]:
+    if r["kind"] != kind or not _same(kind, r["id"], pin["id"]) or r["version"] != pin["version"]:
         raise InstallError(f"{repo}@{rev[:10]} holds {r['kind']} {r['id']} {r['version']}, not the {kind} {pin['id']} {pin['version']} the pairing pins.", 422, "revision_mismatch")
     return r
 

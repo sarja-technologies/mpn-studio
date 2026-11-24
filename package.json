@@ -1,7 +1,7 @@
 {
   "name": "mpn-studio-desktop",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "license": "Apache-2.0",
   "description": "MPN Studio (Modular Persistent Network) desktop application for Linux",
   "scripts": {

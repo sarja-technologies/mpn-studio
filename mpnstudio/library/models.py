@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import coreconf, cores, networks
+from .. import names
 from ..desktop import paths, projects
 from ..store import netops
 
@@ -218,9 +219,11 @@ def list_models() -> list[dict]:
     out = []
     for p in sorted(models_dir().glob("*/model.json")):
         try:
-            out.append(get(p.parent.name))
+            m = get(p.parent.name)
         except (ModelError, ValueError):
             continue
+        m["name"] = names.display_name(m.get("name"))          # stored names are kept; the list shows the official spelling
+        out.append(m)
     return sorted(out, key=lambda m: m.get("modified", ""), reverse=True)
 
 
